@@ -64,11 +64,11 @@ After dolo is installed, try to solve a model by typing the following commands i
     dr = time_iteration(model, verbose=True)     # solve
     sim = simulate(model, dr)                    # simulate
 
-Setting up a work environement
+Setting up a work environment
 ------------------------------
 
 
-Anylising dolo models, is usually done by editing a model file with an (``.yaml``) extension, then running and formating the calculations inside a Jupyter notebook. There are many other worflows, but Jupyter notebooks are becoming a de facto standard in opensource computational research, so that we strongly advise to try them first. Some chapters of this documentation are actually written as notebook, can be downloaded and run interactively.
+A typical workflow with dolo  is usually done by editing a model file with an (``.yaml``) extension, then running and formating the calculations inside a Jupyter notebook. There are many other worflows, but Jupyter notebooks are becoming a de facto standard in opensource computational research, so that we strongly advise to try them first. Some chapters of this documentation are actually written as notebook, can be downloaded and run interactively.
 
 The only step to setup the environment consists in choosing a folder to store the model and the notebooks. Then open a terminal in this folder and launch the notebook server using:
 

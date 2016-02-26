@@ -50,6 +50,17 @@ dtcscc_:
                 - ['values',1,'V']
                 - ['parameters', 0, 'p']
 
+        reward:
+
+            optional: True
+
+            target: ['rewards', 0, 'r']
+
+            eqs:
+                - ['states',0,'s']
+                - ['controls',0,'x']
+                - ['parameters', 0, 'p']
+
         expectation:
 
             optional: True
@@ -130,6 +141,18 @@ dtcscc:
                 - ['controls',1,'X']
                 - ['auxiliaries',1,'Y']
                 - ['values',1,'V']
+                - ['parameters', 0, 'p']
+
+        reward:
+
+            optional: True
+
+            target: ['rewards', 0, 'r']
+
+            eqs:
+                - ['states', 0, 's']
+                - ['controls',0, 'x']
+                - ['auxiliaries',0,'y']
                 - ['parameters', 0, 'p']
 
         expectation:

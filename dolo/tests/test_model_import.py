@@ -85,6 +85,7 @@ def test_dtcscc_model():
     r = model.functions['arbitrage'](s,x,E,S,X,p)
     y = model.functions['auxiliary'](s,x,p)
     v = model.functions['value'](s,x,S,X,V,p)
+    u = model.functions['reward'](s,x,p)
 
     z = model.functions['expectation'](S, X, p)
 
