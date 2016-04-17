@@ -1,4 +1,142 @@
-import numpy
+import numpy as np
+
+def solve_policy(model):
+
+    assert(model.model_type == 'dtmscc')
+    # assert(set(['g','r']).issubset(set(model.model_spec)))
+
+    discount = model.calibration['beta']
+
+    felicity = model.functions['felicity']
+
+    [P, Q] = model.markov_chain
+
+    n_ms = P.shape[0]   # number of markov states
+    n_mv = P.shape[1] # number of markov variables
+
+    x0 = model.calibration['controls']
+    p = model.calibration['parameters']
+    m0 = model.calibration['markov_states']
+
+    n_x = len(x0)
+
+    n_s = len(model.symbols['states'])
+
+    approx = model.options['approximation_space']
+    a = approx['a']
+    b = approx['b']
+
+    orders = approx['orders']
+
+    from dolo.numeric.decision_rules_markov import MarkovDecisionRule
+    mdrv = MarkovDecisionRule(n_ms, a, b, orders) # values
+
+    grid = mdrv.grid
+    N = grid.shape[0]
+
+    s0 = model.calibration['states']
+    r0 = felicity(m0,s0,x0,p)
+    from dolo.misc.dprint import dprint
+    dprint(r0)
+
+    controls_0 = np.zeros((n_ms, N, n_x))
+    controls_0[:,:,:] = model.calibration['controls'][None,None,:]
+    #
+    values_0 = np.zeros((n_ms, N, 1))
+    values_0[:,:,:] = r0/(1-discount)
+
+    transition = model.functions['transition']
+    felicity = model.functions['felicity']
+    controls_lb = model.functions['controls_lb']
+    controls_ub = model.functions['controls_ub']
+
+    mdrv = MarkovDecisionRule(n_ms, a, b, orders) # values
+
+    import scipy.optimize
+
+    maxit = 500
+    it = 0
+    tol_v = 1e-6
+    err_v = 100
+    err_x = 100
+
+    while it<maxit and err_v>tol_v:
+
+        it+=1
+
+        mdrv.set_values(values_0)
+
+        values = values_0.copy()
+        controls = controls_0.copy()
+
+        for i_m in range(n_ms):
+            for n in range(N):
+                m = P[i_m,:]
+                s = grid[n,:]
+                x = controls[i_m,n,:]
+                values[i_m,n,0] = choice_value(transition,felicity, i_m, s, x, mdrv, P, Q, p, discount)
+
+        err_x = abs(controls - controls_0).max()
+        err_v = abs(values - values_0).max()
+
+        values_0 = values
+
+        print((it,err_v))
+
+    maxit = 1000
+    it = 0
+    tol_v = 1e-6
+    err_v = 100
+    err_x = 100
+
+    while it<maxit and err_v>tol_v:
+
+        it+=1
+
+        mdrv.set_values(values_0)
+
+        values = values_0.copy()
+        controls = controls_0.copy()
+
+        for i_m in range(n_ms):
+            for n in range(N):
+
+                m = P[i_m,:]
+                s = grid[n,:]
+                x = controls[i_m,n,:]
+                lb = controls_lb(m,s,p)
+                ub = controls_ub(m,s,p)
+                bounds = [e for e in zip(lb,ub)]
+
+                fun = lambda t: -choice_value(transition,felicity, i_m, s, t, mdrv, P, Q, p, discount)[0]
+                res = scipy.optimize.minimize(fun, x, bounds=bounds)
+
+                controls[i_m,n,:] = res.x
+                values[i_m,n,0] = -fun(res.x)
+
+        err_x = abs(controls - controls_0).max()
+        err_v = abs(values - values_0).max()
+
+        values_0 = values
+        controls_0 = controls
+
+        print((it,err_x,err_v))
+
+    return mdrv
+
+def choice_value(transition,felicity, i_ms, s, x, drv, P, Q, parms, beta):
+
+    n_ms = P.shape[0]   # number of markov states
+    m = P[i_ms,:]
+    cont_v = 0.0
+    for I_ms in range(n_ms):
+        M = P[I_ms,:]
+        prob = Q[i_ms, I_ms]
+        S = transition(m,s,x,M,parms)
+        cont_v += prob*drv(I_ms, S)[0]
+    return felicity(m,s,x,parms) + beta*cont_v
+
+
 
 def evaluate_policy(model, mdr, tol=1e-8,  maxit=2000, grid={}, verbose=True, initial_guess=None, hook=None, integration_orders=None):
 
@@ -47,11 +185,11 @@ def evaluate_policy(model, mdr, tol=1e-8,  maxit=2000, grid={}, verbose=True, in
     grid = mdrv.grid
     N = grid.shape[0]
 
-    controls = numpy.zeros((n_ms, N, n_x))
+    controls = np.zeros((n_ms, N, n_x))
     for i_m in range(n_ms):
         controls[i_m,:,:] = mdr(i_m,grid) #x0[None,:]
 
-    values_0 = numpy.zeros((n_ms, N, n_v))
+    values_0 = np.zeros((n_ms, N, n_v))
     if initial_guess is None:
         for i_m in range(n_ms):
             values_0[i_m,:,:] = v0[None,:]
@@ -90,7 +228,7 @@ def evaluate_policy(model, mdr, tol=1e-8,  maxit=2000, grid={}, verbose=True, in
     import time
     t1 = time.time()
 
-    err_0 = numpy.nan
+    err_0 = np.nan
 
     verbit = (verbose == 'full')
 
@@ -136,7 +274,7 @@ def update_value(val, g, s, x, v, dr, drv, P, Q, parms):
 
     n_ms = P.shape[0]   # number of markov states
 
-    res = numpy.zeros_like(v)
+    res = np.zeros_like(v)
 
     for i_ms in range(n_ms):
 
