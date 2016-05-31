@@ -1,6 +1,6 @@
 import numpy as np
 
-def solve_policy(model):
+def solve_policy(model, grid={}):
 
     assert(model.model_type == 'dtmscc')
     # assert(set(['g','r']).issubset(set(model.model_spec)))
@@ -22,11 +22,10 @@ def solve_policy(model):
 
     n_s = len(model.symbols['states'])
 
-    approx = model.options['approximation_space']
-    a = approx['a']
-    b = approx['b']
-
-    orders = approx['orders']
+    approx = model.get_grid(**grid)
+    a = approx.a
+    b = approx.b
+    orders = approx.orders
 
     from dolo.numeric.decision_rules_markov import MarkovDecisionRule
     mdrv = MarkovDecisionRule(n_ms, a, b, orders) # values
@@ -122,7 +121,10 @@ def solve_policy(model):
 
         print((it,err_x,err_v))
 
-    return mdrv
+    mdr = MarkovDecisionRule(n_ms, a, b, orders) # values
+    mdr.set_values(controls)
+
+    return mdr, mdrv
 
 def choice_value(transition,felicity, i_ms, s, x, drv, P, Q, parms, beta):
 

@@ -1,25 +1,12 @@
-from dolo import *
+def test_vfi():
 
-from dolo import yaml_import
-from dolo.algos.dtmscc.value_iteration import solve_policy
+    from dolo import yaml_import
+    from dolo.algos.dtmscc.value_iteration import solve_policy
 
-groot()
-model = yaml_import("examples/models/rbc_mfga.yaml")
+    model = yaml_import("examples/models/rbc_dtmscc.yaml")
+    drv = solve_policy(model)
 
-model.symbols
 
-drv = solve_policy(model)
+if __name__ == '__main__':
 
-ap = model.options['approximation_space']
-a = ap['a']
-b = ap['b']
-orders = ap['orders']
-
-import numpy as np
-
-kvec = np.linspace(a[0],b[0],orders[0])
-vals = drv(0, kvec[:,None])
-
-from matplotlib import pyplot as plt
-# %matplotlib inline
-plt.plot(kvec, vals)
+    test_vfi()

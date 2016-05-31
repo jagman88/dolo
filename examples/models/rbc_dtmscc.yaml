@@ -62,3 +62,7 @@ options:
        N: 5
 
     grid: !Cartesian
+        a: [ k*0.9 ]
+        b: [ k*1.1 ]
+        orders: [ 50 ]
+        mu: 3
