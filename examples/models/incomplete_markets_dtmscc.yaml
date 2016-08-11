@@ -1,0 +1,58 @@
+model_type: dtmscc
+
+name: incomplete_markets
+
+symbols:
+    markov_states: [e]
+    states: [k]
+    controls: [c]
+    rewards: [u]
+    parameters: [beta,sigma,alpha,delta,lbar,a,mu,Lbar,Lb,Lg,kagg,y,w,r,tau,DeltaA,ub,ug]
+
+equations:
+
+    transition:
+        - k = k(-1)*(1+r-delta) + ((1-tau)*lbar*e(-1) + mu*(1-e(-1)))*w - c(-1)
+    transition_inv:
+        - c = k*(1+r-delta) + ((1-tau)*lbar*e + mu*(1-e))*w - k(+1)
+        # - c(-1) = k(-1)*(1+r-delta) + ((1-tau)*lbar*e(-1) + mu*(1-e(-1)))*w - k
+    arbitrage:
+        - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + ((1-tau)*lbar*e + mu*(1-e))*w
+    felicity:
+        - u = c^(1-sigma)/(1-sigma)
+
+calibration:
+
+    beta: 0.99
+    sigma: 2
+    alpha: 0.36
+    delta: 0.025
+    lbar: 1/0.9
+    a: 1
+    mu: 0.15
+    ub: 0.1
+    ug: 0.04
+    Lb: 1 - ub
+    Lg: 1 - ug
+    Lbar: Lb
+    kagg: 55   # 43
+    DeltaA: 0.01
+    k: kagg
+    y: a*kagg^alpha*(lbar*Lbar)^alpha
+    c: y - delta*kagg
+    w: a*(1-alpha)*(kagg/(lbar*Lbar))^alpha
+    r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1)
+    tau: mu*ub/(lbar*Lbar)
+
+options:
+
+    grid: !Cartesian
+        a: [0.0]
+        b: [100.0]
+        orders: [50]
+
+    discrete_transition: !MarkovChain
+            P: [[0.0],
+                [1.0]]      # a list of markov states
+            Q: [[0.60, 0.40],   # a transition matrix
+                [0.044445, 0.955555]]

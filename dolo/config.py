@@ -11,6 +11,8 @@
 save_plots = False
 real_type = 'double'
 debug = False
+# NOTE: turning off parallelization gives me quite large speed gains...
+guvectorize_target='cpu'
 
 import warnings
 
