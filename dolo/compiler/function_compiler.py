@@ -273,7 +273,8 @@ def compile_function_ast(equations, symbols, arg_names, output_names=None, funna
 
     jitted = jit(fun, nopython=True)
     if vectorize:
-        gufun = guvectorize([fty], signature, target='parallel', nopython=True)(fun)
+        target=dolo.config.guvectorize_target
+        gufun = guvectorize([fty], signature, target=target, nopython=True)(fun)
         return jitted, gufun
     else:
         return jitted

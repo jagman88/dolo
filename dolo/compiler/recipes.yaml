@@ -143,6 +143,24 @@ dtmscc:
                 - ['markov_states',0,'M']
                 - ['parameters', 0, 'p']
 
+        transition_inv:
+
+            target: ['controls',0,'x']
+
+            eqs:
+                - ['states',1,'S']
+                - ['states',0,'s']
+                - ['markov_states',0,'m']
+                - ['parameters', 0, 'p']
+
+            # target: ['controls',-1,'x']
+            #
+            # eqs:
+            #     - ['states',0,'S']
+            #     - ['states',-1,'s']
+            #     - ['markov_states',-1,'m']
+            #     - ['parameters', 0, 'p']
+
         value:
 
             optional: True
