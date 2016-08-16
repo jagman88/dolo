@@ -5,7 +5,7 @@ from dolo.algos.dtmscc.time_iteration import time_iteration
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
-def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
+def stat_dist(model, mdr, Nkf=1000, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     Compute a histogram of the stationary distribution for some fixed set of aggregate variables.
 
@@ -15,6 +15,12 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
         "dtmscc" model to be solved
     mdr : Markov decision rule
         Markov decision rule associated with solution to the model
+    Nkf : int
+        Number of grid points used in the range of the stationary distribution
+    itmaxL : int
+        Maximum number of iterations over the distribution evolution equation
+    tolL : int
+        Tolerance on the distance between subsequent distributions
 
     Returns
     -------
@@ -22,8 +28,6 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
         The density across states for the model
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
-    kgridf : array
-        Fine grid of state variables used for the histogram.
     '''
 
     # Exogenous/Markov state variable
@@ -32,7 +36,8 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
     Qe = np.kron(P, np.ones([Nkf,1]))      # Exogenous state transitions
 
     # Find fine grid and the state tomorrow on the fine grid
-    kgridf, kprimef = mdr_to_sprime(model, mdr, Nkf, Ne)
+    kgridf = fine_grid(model, Nkf)
+    kprimef = mdr_to_sprime(model, mdr, Nkf)
 
     # Compute endogenous transitions
     # NOTE: we want to assign the distance away from the *lower* bound to the *upper* bound (and conversely, assign distance awway from *lower* bound to the *upper* bound. E.g., if k' is 3/4 of the way between kj and kj+1, then want to assign 3/4 weight to kj+1.
@@ -72,7 +77,7 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
 
     # L = L.reshape(Ne, Nkf).T
 
-    return L, QT, kgridf
+    return L, QT
 
 
 def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=False):
@@ -105,13 +110,17 @@ def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
 
     K = Kinit
     model.set_calibration(kagg=K)
-    damp = 1.0
+    mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
+    kgridf = fine_grid(model, Nkf)
+    kprimef = mdr_to_sprime(model, mdr, Nkf)
+
+    damp = 0.999
     for iteq in range(itermaxKeq):
         # Solve for decision rule given current guess for K
         mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
 
         # Solve for stationary distribution given decision rule
-        L, QT, kgridf = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
+        L, QT = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
         Kagg = np.dot(L, np.hstack([kgridf, kgridf]))
 
         dK = np.linalg.norm(Kagg-K)/K
@@ -131,7 +140,8 @@ def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     return K
 
 
-def mdr_to_sprime(model, mdr, Nkf, Ne):
+
+def mdr_to_sprime(model, mdr, Nkf):
     '''
     Solve the Markov decision rule on the fine grid, and compute the next
     period's state variable.
@@ -142,17 +152,19 @@ def mdr_to_sprime(model, mdr, Nkf, Ne):
         "dtmscc" model to be solved
     mdr : Markov decision rule
         Markov decision rule associated with solution to the model
+    Nkf : int
+        Number of points in the fine grid for the distribution
 
     Returns
     -------
-    L : array
-        The density across states for the model
+    kprimef : array
+        Next period's state variable, given the decision rule mdr
     '''
 
+    Ne = model.markov_chain[0].shape[0]
     egrid = model.markov_chain[0]
-    a = mdr.a
-    b = mdr.b
-    kgridf = np.linspace(a, b, num=Nkf)
+    kgridf = fine_grid(model, Nkf)
+
     trans = model.functions['transition']      # trans(m, s, x, M, p, out)
     parms = model.calibration['parameters']
 
@@ -167,10 +179,10 @@ def mdr_to_sprime(model, mdr, Nkf, Ne):
     kprimef = np.reshape(kprimef, (Nkf*Ne, 1), order='F')
 
     # Force kprimef onto the grid for use in computing the stationary distribution.
-    kprimef = np.maximum(kprimef, a)
-    kprimef = np.minimum(kprimef, b)
+    kprimef = np.maximum(kprimef, min(kgridf))
+    kprimef = np.minimum(kprimef, max(kgridf))
 
-    return kgridf, kprimef
+    return kprimef
 
 
 
@@ -192,3 +204,16 @@ def lookup(grid, x):
     idL = idU -1                  # lower bound index = upper bound index - 1
 
     return idL, idU
+
+
+
+def fine_grid(model, Nkf):
+    '''
+    Construct fine grid for endogenous state variable.
+    '''
+    grid = model.get_grid()
+    a = grid.a
+    b = grid.b
+    kgridf = np.linspace(a, b, num=Nkf)
+
+    return kgridf
