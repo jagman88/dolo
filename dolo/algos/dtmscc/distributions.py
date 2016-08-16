@@ -1,15 +1,13 @@
 import numpy as np
 import scipy.sparse as spa
+from dolo.algos.dtmscc.time_iteration import time_iteration
 
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
 def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
     '''
-    Idea is:
-    First, create a histogram of the stationary distribution for some fixed set of aggregate variables.
-    Second, allow the computation of the equilibrium interest rate
-
+    Compute a histogram of the stationary distribution for some fixed set of aggregate variables.
 
     Parameters
     ----------
@@ -28,36 +26,19 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
         Fine grid of state variables used for the histogram.
     '''
 
-    #TODO: Need to generalize the code. At the moment only takes one dimensional models.
-
-    a = mdr.a
-    b = mdr.b
-    orders = mdr.orders
+    # Exogenous/Markov state variable
     Ne = model.markov_chain[0].shape[0]
-    Nk = model.get_grid().orders[0]
-    egrid = model.markov_chain[0]
-    kgridf = np.linspace(a, b, num=Nkf)
-    trans = model.functions['transition']      # trans(m, s, x, M, p, out)
-    parms = model.calibration['parameters']
-
     P = model.markov_chain[1]              # Markov transition matrix
     Qe = np.kron(P, np.ones([Nkf,1]))      # Exogenous state transitions
 
-    # Construct next period's state variable using Markov decision rule
-    mdrc = np.zeros([Nkf, Ne])
-    kprimef = np.zeros([Nkf, Ne])
-    for i_m in range(Ne):
-        mdrc[:, i_m] = mdr(i_m, kgridf.reshape(-1,1)).flatten()
-        kprimef[:, i_m] = trans(egrid[i_m], kgridf.reshape(-1,1), mdrc[:,i_m].reshape(-1,1), egrid[i_m], parms).flatten()
-
-    # NOTE: Need Fortran ordering here, because k dimension changes fastest
-    kprimef = np.reshape(kprimef, (Nkf*Ne, 1), order='F')
+    # Find fine grid and the state tomorrow on the fine grid
+    kgridf, kprimef = mdr_to_sprime(model, mdr, Nkf, Ne)
 
     # Compute endogenous transitions
-    idxlist = np.arange(0,Nkf*Ne)
-    idL, idU = lookup(kgridf, kprimef)
-
     # NOTE: we want to assign the distance away from the *lower* bound to the *upper* bound (and conversely, assign distance awway from *lower* bound to the *upper* bound. E.g., if k' is 3/4 of the way between kj and kj+1, then want to assign 3/4 weight to kj+1.
+
+    idxlist = np.arange(0,Nkf*Ne)
+    idL, idU = lookup(kgridf, kprimef)  # Upper and lower bracketing indices
 
     weighttoupper = ( (kprimef - kgridf[idL])/(kgridf[idU] - kgridf[idL]) ).flatten()
     weighttolower = ( (kgridf[idU] - kprimef)/(kgridf[idU] - kgridf[idL]) ).flatten()
@@ -66,8 +47,7 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
     QkU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Nkf*Ne, Nkf))
     Qk =(QkL + QkU).tocsr()    # convert to CSR for better sparse matrix arithmetic performance.
 
-
-    # # TODO: Need to keep the row kronecker product in sparse matrix format
+    # TODO: Need to keep the row kronecker product in sparse matrix format
     Qk = Qk.toarray()
     rowkron = Qe[:, :, None]*Qk[:, None, :]
     rowkron = rowkron.reshape([Nkf*Ne, -1])
@@ -75,6 +55,7 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
     # NOTE: CSR format (Compressed Sparse Row) has efficient arithmetic operations.
     # Useful here since we are using QT*L to compute L'.
 
+    # Find stationary distribution, starting from uniform distribution
     L = np.ones(Nkf*Ne)
     L = L/sum(L)
     for itL in range(itmaxL):
@@ -89,14 +70,110 @@ def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
 
         L = np.copy(Lnew)
 
-    L = L.reshape(Ne, Nkf).T
-
+    # L = L.reshape(Ne, Nkf).T
 
     return L, QT, kgridf
 
 
+def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=False):
+    '''
+    Solve for the equilibrium value of the aggregate capital stock in the model.
+    Do this via a damping algorithm over the capital stock. Iterate until
+    aggregate capital yields an interest rate that induces a distribution of
+    capital accumulation across agents that is consistent with that capital stock.
 
-# Lookup function
+    Parameters
+    ----------
+    model : NumericModel
+        "dtmscc" model to be solved
+    Kinit : float
+        Initial guess for the aggregate capital stock
+    Nkf : int
+        Number of points in the fine grid for the distribution
+    itermaxKeq : int
+        Maximum number of iterations over the capital stock
+    tolKeq : int
+        Maximum distance between succesive iterations over capital
+
+    Returns
+    -------
+    K : float
+        Equilibrium aggregate capital
+    '''
+
+    # TODO: need option for which algorithm will be used to solve for the decision rule
+
+    K = Kinit
+    model.set_calibration(kagg=K)
+    damp = 1.0
+    for iteq in range(itermaxKeq):
+        # Solve for decision rule given current guess for K
+        mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
+
+        # Solve for stationary distribution given decision rule
+        L, QT, kgridf = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
+        Kagg = np.dot(L, np.hstack([kgridf, kgridf]))
+
+        dK = np.linalg.norm(Kagg-K)/K
+        if (dK < tolKeq):
+            break
+
+        if verbose is True:
+            print('Iteration = \t%i: K=\t%1.4f  Kagg=\t%1.4f\n' % (iteq, K, Kagg) )
+
+        # Update guess for aggregate capital using damping
+        K = damp*K + (1-damp)*Kagg
+
+        # Update calibration and reduce damping paramter
+        model.set_calibration(kagg=K)
+        damp = 0.995*damp
+
+    return K
+
+
+def mdr_to_sprime(model, mdr, Nkf, Ne):
+    '''
+    Solve the Markov decision rule on the fine grid, and compute the next
+    period's state variable.
+
+    Parameters
+    ----------
+    model : NumericModel
+        "dtmscc" model to be solved
+    mdr : Markov decision rule
+        Markov decision rule associated with solution to the model
+
+    Returns
+    -------
+    L : array
+        The density across states for the model
+    '''
+
+    egrid = model.markov_chain[0]
+    a = mdr.a
+    b = mdr.b
+    kgridf = np.linspace(a, b, num=Nkf)
+    trans = model.functions['transition']      # trans(m, s, x, M, p, out)
+    parms = model.calibration['parameters']
+
+    # Construct next period's state variable using Markov decision rule
+    mdrc = np.zeros([Nkf, Ne])
+    kprimef = np.zeros([Nkf, Ne])
+    for i_m in range(Ne):
+        mdrc[:, i_m] = mdr(i_m, kgridf.reshape(-1,1)).flatten()
+        kprimef[:, i_m] = trans(egrid[i_m], kgridf.reshape(-1,1), mdrc[:,i_m].reshape(-1,1), egrid[i_m], parms).flatten()
+
+    # NOTE: Need Fortran ordering here, because k dimension changes fastest
+    kprimef = np.reshape(kprimef, (Nkf*Ne, 1), order='F')
+
+    # Force kprimef onto the grid for use in computing the stationary distribution.
+    kprimef = np.maximum(kprimef, a)
+    kprimef = np.minimum(kprimef, b)
+
+    return kgridf, kprimef
+
+
+
 def lookup(grid, x):
     '''
     Finds indices of points in the grid that bracket the values in x.
