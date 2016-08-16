@@ -1,9 +1,10 @@
-import numpy
+import numpy as np
+import scipy.sparse as spa
 
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
-def stat_dist(model, dr, Nkf):
+def stat_dist(model, mdr, Nkf=500, itmaxL=5000, tolL=1e-11, verbose=False):
     '''
     Idea is:
     First, create a histogram of the stationary distribution for some fixed set of aggregate variables.
@@ -14,8 +15,8 @@ def stat_dist(model, dr, Nkf):
     ----------
     model : NumericModel
         "dtmscc" model to be solved
-    dr : decision rule
-        Decision rule from the solved model
+    mdr : Markov decision rule
+        Markov decision rule associated with solution to the model
 
     Returns
     -------
@@ -23,53 +24,59 @@ def stat_dist(model, dr, Nkf):
         The density across states for the model
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
+    kgridf : array
+        Fine grid of state variables used for the histogram.
     '''
 
-    #TODO: Need to make code take a decision rule object. Do we take the object before
-    # or after it has been solved on the fine grid used for the histogram?
     #TODO: Need to generalize the code. At the moment only takes one dimensional models.
 
-    a = model.options['grid'].a
-    b = model.options['grid'].b
+    a = mdr.a
+    b = mdr.b
+    orders = mdr.orders
+    Ne = model.markov_chain[0].shape[0]
+    Nk = model.get_grid().orders[0]
+    egrid = model.markov_chain[0]
     kgridf = np.linspace(a, b, num=Nkf)
+    trans = model.functions['transition']      # trans(m, s, x, M, p, out)
+    parms = model.calibration['parameters']
 
-    P = model.markov_chain[1]
-    Qe = np.kron(P, np.ones([Nkf,1]))
+    P = model.markov_chain[1]              # Markov transition matrix
+    Qe = np.kron(P, np.ones([Nkf,1]))      # Exogenous state transitions
 
-    #
-    # Qk = np.zeros([Nkf*Ne, Nkf])
+    # Construct next period's state variable using Markov decision rule
+    mdrc = np.zeros([Nkf, Ne])
+    kprimef = np.zeros([Nkf, Ne])
+    for i_m in range(Ne):
+        mdrc[:, i_m] = mdr(i_m, kgridf.reshape(-1,1)).flatten()
+        kprimef[:, i_m] = trans(egrid[i_m], kgridf.reshape(-1,1), mdrc[:,i_m].reshape(-1,1), egrid[i_m], parms).flatten()
 
-    idxlist = np.arange(0,Nkf*Ne).reshape(-1,1)
+    # NOTE: Need Fortran ordering here, because k dimension changes fastest
+    kprimef = np.reshape(kprimef, (Nkf*Ne, 1), order='F')
+
+    # Compute endogenous transitions
+    idxlist = np.arange(0,Nkf*Ne)
     idL, idU = lookup(kgridf, kprimef)
 
-    # IMPORTANT: we want to assign the distance away from the *lower* bound to the *upper* bound (and conversely, assign
-    # distance awway from *lower* bound to the *upper* bound. That is, if k' is 3/4 of the way between kj and kj+1,
-    # then want to assign 3/4 weight to kj+1.
+    # NOTE: we want to assign the distance away from the *lower* bound to the *upper* bound (and conversely, assign distance awway from *lower* bound to the *upper* bound. E.g., if k' is 3/4 of the way between kj and kj+1, then want to assign 3/4 weight to kj+1.
 
-    toupper = (kprimef - kgridf[idL])/(kgridf[idU] - kgridf[idL])
-    tolower = (kgridf[idU] - kprimef)/(kgridf[idU] - kgridf[idL])
+    weighttoupper = ( (kprimef - kgridf[idL])/(kgridf[idU] - kgridf[idL]) ).flatten()
+    weighttolower = ( (kgridf[idU] - kprimef)/(kgridf[idU] - kgridf[idL]) ).flatten()
 
-    # #TODO: Is there a way to make the Qk matrix in one line?
-    QkL = spa.coo_matrix((tolower.flatten(), (idxlist.flatten(), idL.flatten())), shape=(Nkf*Ne, Nkf))
-    QkU = spa.coo_matrix((toupper.flatten(), (idxlist.flatten(), idU.flatten())), shape=(Nkf*Ne, Nkf))
-    Qk =(QkL + QkU).tocsr()    # convert to CSR for better sparse matrix arithmatic performance.
+    QkL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Nkf*Ne, Nkf))
+    QkU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Nkf*Ne, Nkf))
+    Qk =(QkL + QkU).tocsr()    # convert to CSR for better sparse matrix arithmetic performance.
 
 
-    # # TODO: NEED TO KEEP THIS AS A SPARSE MATRIX!!
+    # # TODO: Need to keep the row kronecker product in sparse matrix format
     Qk = Qk.toarray()
     rowkron = Qe[:, :, None]*Qk[:, None, :]
     rowkron = rowkron.reshape([Nkf*Ne, -1])
-
     QT = spa.csr_matrix(rowkron).T
-    # # NOTE: CSR (Compressed Sparse Row) has efficient arithmetic operations, but inefficient column slicing.
-    # # Useful here since we are just using QT for transitions.
+    # NOTE: CSR format (Compressed Sparse Row) has efficient arithmetic operations.
+    # Useful here since we are using QT*L to compute L'.
 
     L = np.ones(Nkf*Ne)
     L = L/sum(L)
-    itmaxL = 5000
-    tolL = 1e-11
-    verbose = False
-
     for itL in range(itmaxL):
         Lnew = QT*L      # Sparse matrices can be multipled
         dL = np.linalg.norm(Lnew-L)/np.linalg.norm(L)
@@ -85,16 +92,18 @@ def stat_dist(model, dr, Nkf):
     L = L.reshape(Ne, Nkf).T
 
 
-    return L, QT
+    return L, QT, kgridf
 
 
 
 # Lookup function
 def lookup(grid, x):
     '''
-    Finds the indices of the points in grid that brack the values in x: grid[idL] <=
+    Finds indices of points in the grid that bracket the values in x.
     Grid must be sorted in ascending order. Find the first index, i, in grid such that grid[i] <= x.
-    At the end of table, if x = grid[N], then set i = N-1. This is so that the upper index, i+1, would, be N-1.
+    This is the index of the upper bound for x, unless x is equal to the lowest value on the grid,
+    in which case set the upper bound index equal to 1. The lower bound index is simply one less
+    than the upper bound index.
     '''
     N = grid.shape[0]-1   # N = last index in grid
     m = grid.min()

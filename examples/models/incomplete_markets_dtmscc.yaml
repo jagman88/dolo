@@ -35,7 +35,7 @@ calibration:
     Lb: 1 - ub
     Lg: 1 - ug
     Lbar: Lb
-    kagg: 55   # 43
+    kagg: 43
     DeltaA: 0.01
     k: kagg
     y: a*kagg^alpha*(lbar*Lbar)^alpha
