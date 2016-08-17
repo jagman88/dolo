@@ -6,6 +6,8 @@ from dolo.numeric.misc import mlinspace
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
+
+# MOSTlY DONE
 def stat_dist(model, mdr, Nf=1000, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     Compute a histogram of the stationary distribution for some fixed set of aggregate variables.
@@ -90,6 +92,7 @@ def stat_dist(model, mdr, Nf=1000, itmaxL=5000, tolL=1e-8, verbose=False):
     return L, QT
 
 
+# TODO: GENERALIZE. Might be kind of hard...
 def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     '''
     Solve for the equilibrium value of the aggregate capital stock in the model.
@@ -172,6 +175,7 @@ def lookup(grid, x):
     return idL, idU
 
 
+# MOSTlY DONE
 def mdr_to_sprime(model, mdr, Nf):
     '''
     Solve the Markov decision rule on the fine grid, and compute the next
@@ -229,7 +233,7 @@ def mdr_to_sprime(model, mdr, Nf):
     return sprimef
 
 
-
+# DONE
 def fine_grid(model, Nf):
     '''
     Construct evenly spaced fine grids for endogenous state variables, using the

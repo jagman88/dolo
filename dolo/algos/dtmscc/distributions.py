@@ -140,6 +140,50 @@ def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     return K
 
 
+def supply_demand(model, Nkf=1000, numpoints=20, lower=37, upper=45, verbose=True):
+    '''
+    Solve the model at a range of aggregate capital values to generate supply
+    and demand curves for the aggregate capital stock.
+
+    Parameters
+    ----------
+    model : NumericModel
+        "dtmscc" model to be solved
+    Nkf : int
+        Number of points in the fine grid for the distribution
+    numpoints : int
+        Number of points at which to evaluate the curves
+    lower : float
+        Lower bound on aggregate capital stock (demand)
+    Upper : float
+        Upper bound on aggregate capital stock (demand)
+
+    Returns
+    -------
+    Kd : array
+        Set of aggreate capital demands
+    Ks : array
+        Set of aggregate capital supplies
+    r : array
+        Set of interest rates at each point on the demand-supply curves
+    '''
+    Kd = np.linspace(lower,upper,numpoints)
+    Ks = np.zeros([numpoints,1])
+    r = np.zeros([numpoints,1])
+
+    for i in range(numpoints):
+        model.set_calibration(kagg=Kd[i])
+        mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
+        kgridf = fine_grid(model, Nkf)
+        kprimef = mdr_to_sprime(model, mdr, Nkf)
+        L, QT = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
+        Ks[i] = np.dot(L, np.hstack([kgridf, kgridf]))
+        r[i] = model.calibration_dict['r']
+        print('Iteration = %i\n' % i)
+
+    return Kd, Ks, r
+
+
 
 def mdr_to_sprime(model, mdr, Nkf):
     '''
