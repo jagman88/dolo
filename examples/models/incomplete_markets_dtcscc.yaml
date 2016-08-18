@@ -1,0 +1,59 @@
+model_type: dtcscc
+
+name: incomplete_markets
+
+symbols:
+    states: [k, e]
+    controls: [c]
+    shocks: [eps_e]
+    rewards: [u]
+    parameters: [beta,sigma,alpha,delta,lbar,a,mu,Lbar,Lb,Lg,kagg,y,w,r,tau,DeltaA,ub,ug, sig_e, rho_e]
+
+equations:
+
+    transition:
+        - k = k(-1)*(1+r-delta) + ((1-tau)*lbar*e(-1) + mu*(1-e(-1)))*w - c(-1)
+        - e = exp(rho_e*log(e(-1)) + eps_e)
+    # transition_inv:
+    #     - c = k*(1+r-delta) + ((1-tau)*lbar*exp(e) + mu*(1-exp(e)))*w - k(+1)
+    arbitrage:
+        - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + ((1-tau)*lbar*e + mu*(1-e))*w
+    felicity:
+        - u = c^(1-sigma)/(1-sigma)
+
+calibration:
+
+    beta: 0.99
+    sigma: 2
+    alpha: 0.36
+    delta: 0.025
+    lbar: 1/0.9
+    a: 1
+    mu: 0.15
+    ub: 0.1
+    ug: 0.04
+    Lb: 1 - ub
+    Lg: 1 - ug
+    Lbar: Lb
+    kagg: 38
+    DeltaA: 0.01
+    k: kagg
+    y: a*kagg^alpha*(lbar*Lbar)^alpha
+    c: y - delta*kagg
+    w: a*(1-alpha)*(kagg/(lbar*Lbar))^alpha
+    r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1) - DeltaA
+    tau: mu*ub/(lbar*Lbar)
+    e: 1.0
+    eps_e: 0.0
+    sig_e: 0.1
+    rho_e: 0.75
+
+options:
+
+    distribution: !Normal
+        sigma: [ [ sig_e**2] ]
+
+    grid: !Cartesian
+        a: [0.0, 0.1]
+        b: [100.0, 3]
+        orders: [20, 5]
