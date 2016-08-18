@@ -167,6 +167,8 @@ def supply_demand(model, Nkf=1000, numpoints=20, lower=37, upper=45, verbose=Tru
     r : array
         Set of interest rates at each point on the demand-supply curves
     '''
+    Ne = model.markov_chain[0].shape[0]
+
     Kd = np.linspace(lower,upper,numpoints)
     Ks = np.zeros([numpoints,1])
     r = np.zeros([numpoints,1])
@@ -177,7 +179,7 @@ def supply_demand(model, Nkf=1000, numpoints=20, lower=37, upper=45, verbose=Tru
         kgridf = fine_grid(model, Nkf)
         kprimef = mdr_to_sprime(model, mdr, Nkf)
         L, QT = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
-        Ks[i] = np.dot(L, np.hstack([kgridf, kgridf]))
+        Ks[i] = np.dot(L, np.tile(kgridf,Ne))    # Ks[i] = np.dot(L, np.hstack([kgridf, kgridf]))
         r[i] = model.calibration_dict['r']
         print('Iteration = %i\n' % i)
 
