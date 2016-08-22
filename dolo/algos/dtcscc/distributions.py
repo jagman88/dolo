@@ -2,7 +2,6 @@ import numpy as np
 import scipy.sparse as spa
 from dolo.algos.dtcscc.time_iteration import time_iteration
 from dolo.numeric.misc import mlinspace
-from dolo.numeric.discretization.quadrature import gauss_hermite_nodes
 
 
 # # Check whether inverse transition is in the model.
@@ -46,22 +45,21 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     parms = model.calibration['parameters']
 
     # Get the quadrature nodes for the iid normal shocks
-    sig_e = np.array([model.calibration_dict['sig_e']])
-    [eps,w] = gauss_hermite_nodes(Nq, 3*sig_e, mu=0.1)
-    # TODO: Why this the range of the quadrature nodes so much smaller than in matlab?
+    distrib = model.get_distribution()
+    nodes, weights = distrib.discretize(orders=Nq)
     # TODO: get the quadrature appropriate to the shock (i.e. normal, beta, etc..)
 
     Qe = spa.csr_matrix((Nkf*Nef, Nef))
     idxlist = np.arange(0,Nkf*Nef)
 
     for i in range(Nq):
-        eprimef = gtilde(model, sf[:,1], eps[i])
+        eprimef = gtilde(model, sf[:,1], nodes[i])
         idL, idU = lookup(egridf, eprimef)  # Upper and lower bracketing indices
         weighttoupper = ( (eprimef - egridf[idL])/(egridf[idU] - egridf[idL]) ).flatten()
         weighttolower = ( (egridf[idU] - eprimef)/(egridf[idU] - egridf[idL]) ).flatten()
         QeL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Nkf*Nef, Nef))
         QeU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Nkf*Nef, Nef))
-        Qe += w[i]*(QeL + QeU).tocsr()
+        Qe += weights[i]*(QeL + QeU).tocsr()
 
     # Find the state tomorrow on the fine grid
     kprimef = dr_to_sprime(model, dr, Nf)

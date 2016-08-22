@@ -27,7 +27,7 @@ calibration:
     sigma: 2
     alpha: 0.36
     delta: 0.025
-    lbar: 0.975
+    lbar: 0.9
     a: 1
     mu: 0.15
     ub: 0.1
@@ -40,7 +40,7 @@ calibration:
     c: y - delta*kagg
     e: 1.0
     eps_e: 0.0
-    rho_e: 0.75
+    rho_e: 0.85
     sig_e: ((1 - rho_e^2)*2*log(1/lbar))^(1/2)
     Lbar: exp(1/2*sig_e^2/(1-rho_e^2))
     y: a*kagg^alpha*(lbar*Lbar)^alpha
@@ -51,7 +51,7 @@ calibration:
 options:
 
     distribution: !Normal
-        sigma: [ [ sig_e**2] ]
+        sigma: [ [ sig_e] ]
 
     grid: !Cartesian
         a: [0.0, 0.1]
