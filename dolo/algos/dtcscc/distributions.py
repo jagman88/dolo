@@ -102,7 +102,7 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     return L, QT
 
 
-def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=False):
+def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     '''
     Solve for the equilibrium value of the aggregate capital stock in the model.
     Do this via a damping algorithm over the capital stock. Iterate until
@@ -115,8 +115,10 @@ def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
         "dtcscc" model to be solved
     Kinit : float
         Initial guess for the aggregate capital stock
-    Nkf : int
-        Number of points in the fine grid for the distribution
+    Nf : array
+        Number of fine grid points in each dimension
+    Nq : int
+        Number of quadrature nodes over the iid shock
     itermaxKeq : int
         Maximum number of iterations over the capital stock
     tolKeq : int
@@ -130,20 +132,22 @@ def solve_eqm(model, Kinit=38, Nkf=1000, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
 
     # TODO: need option for which algorithm will be used to solve for the decision rule
 
+    Nkf = Nf[0]
+    Nef = Nf[1]
     K = Kinit
     model.set_calibration(kagg=K)
-    mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
-    kgridf = fine_grid(model, Nkf)
-    kprimef = mdr_to_sprime(model, mdr, Nkf)
+    dr = time_iteration(model, with_complementarities=True, verbose=False)
+    kprimef = dr_to_sprime(model, dr, Nf)
+    kgridf, egridf = fine_grid(model, Nf)
 
     damp = 0.999
     for iteq in range(itermaxKeq):
         # Solve for decision rule given current guess for K
-        mdr = time_iteration(model, with_complementarities=True, verbose=False, output_type='dr')
+        dr = time_iteration(model, with_complementarities=True, verbose=False)
 
         # Solve for stationary distribution given decision rule
-        L, QT = stat_dist(model, mdr, Nkf=Nkf, verbose=False)
-        Kagg = np.dot(L, np.hstack([kgridf, kgridf]))
+        L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
+        Kagg = np.dot(L, np.tile(kgridf,Nef))
 
         dK = np.linalg.norm(Kagg-K)/K
         if (dK < tolKeq):
@@ -203,7 +207,7 @@ def supply_demand(model, Nf, numpoints=20, lower=40, upper=75, verbose=True):
         model.set_calibration(kagg=Kd[i])
         dr = time_iteration(model, with_complementarities=True, verbose=False)
         kprimef = dr_to_sprime(model, dr, Nf)
-        L, QT = stat_dist(model, dr, Nf, Nq=7, verbose=False)
+        L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
         Ks[i] = np.dot(L, np.tile(kgridf,Nef))
         r[i] = model.calibration_dict['r']
         if verbose is True:
