@@ -51,7 +51,7 @@ calibration:
 options:
 
     distribution: !Normal
-        sigma: [ [ sig_e] ]
+        sigma: [ [ sig_e**2] ]
 
     grid: !Cartesian
         a: [0.0, 0.1]
