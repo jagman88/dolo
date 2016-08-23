@@ -7,17 +7,18 @@ symbols:
     controls: [c]
     shocks: [eps_e]
     rewards: [u]
-    parameters: [beta,sigma,alpha,delta,lbar,a,mu,Lbar,Lb,Lg,kagg,y,w,r,tau,DeltaA,ub,ug, sig_e, rho_e]
+    parameters: [beta,sigma,alpha,delta,lbar,a,mu,Lbar,Lb,Lg,kagg,y,w,r,tau,DeltaA,ub,ug, sig_e, rho_e, sig_eun]
 
 equations:
 
     transition:
-        - k = k(-1)*(1+r-delta) + lbar*e(-1)*w - c(-1)
-        - e = exp(rho_e*log(e(-1)) + eps_e)
+        - k = k(-1)*(1+r-delta) + lbar*exp(e(-1))*w - c(-1)
+        - e = rho_e*e(-1) + eps_e
+        # - e = tanh(rho_e*e(-1)/sig_eun + eps_e)*sig_eun
     # transition_inv:
     #     - c = k*(1+r-delta) + ((1-tau)*lbar*exp(e) + mu*(1-exp(e)))*w - k(+1)
     arbitrage:
-        - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + lbar*e*w
+        - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + lbar*exp(e)*w
     felicity:
         - u = c^(1-sigma)/(1-sigma)
 
@@ -47,6 +48,7 @@ calibration:
     w: a*(1-alpha)*(kagg/(lbar*Lbar))^alpha
     r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1)
     tau: mu*ub/(lbar*Lbar)
+    sig_eun: 3*sig_e/sqrt(1 - rho_e^2)
 
 options:
 
@@ -54,6 +56,6 @@ options:
         sigma: [ [ sig_e**2] ]
 
     grid: !Cartesian
-        a: [0.0, 0.1]
-        b: [150.0, 5]
+        a: [0.0, -sig_eun]
+        b: [150.0, sig_eun]
         orders: [20, 20]

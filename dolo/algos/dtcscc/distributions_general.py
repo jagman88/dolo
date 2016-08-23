@@ -7,6 +7,7 @@ from dolo.numeric.misc import mlinspace
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
+# TODO: GENERALIZE
 def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     Compute a histogram of the stationary distribution for some fixed set of
@@ -101,6 +102,7 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     return L, QT
 
 
+# TODO: GENERALIZE
 def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     '''
     Solve for the equilibrium value of the aggregate capital stock in the model.
@@ -132,7 +134,6 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     # TODO: need option that selects which algorithm will be used to solve for
     # the decision rule
 
-    Nkf = Nf[0]
     Nef = Nf[1]
     K = Kinit
     model.set_calibration(kagg=K)
@@ -166,6 +167,7 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     return K
 
 
+# TODO: GENERALIZE
 def supply_demand(model, Nf, numpoints=20, lower=40, upper=75, verbose=True):
     '''
     Solve the model at a range of aggregate capital values to generate supply
@@ -194,7 +196,6 @@ def supply_demand(model, Nf, numpoints=20, lower=40, upper=75, verbose=True):
         Set of interest rates at each point on the demand-supply curves
     '''
 
-    Nkf = Nf[0]
     Nef = Nf[1]
     Nq = 7
     kgridf, egridf = fine_grid(model, Nf)
@@ -217,6 +218,11 @@ def supply_demand(model, Nf, numpoints=20, lower=40, upper=75, verbose=True):
 
 
 
+# TODO: allow for multiple exogenous processes
+# NOTE: To do this, would need to know which variables are exogenous...
+# NOTE: Alternative would be to use the tanh trick for all exogenous
+# variable transitions. But then need that to be in any/every
+# heterogeneous agents model...
 def gtilde(model, e, eps):
     '''
     Transition rule for the exogeneous variable that ensures it remains on the grid.
@@ -239,7 +245,11 @@ def gtilde(model, e, eps):
     emin = grid.a[1]
     emax = grid.b[1]
     rho_e = model.calibration_dict['rho_e']
-    gtilde = np.maximum(np.minimum(e**rho_e*np.exp(eps), emax), emin)
+    # gtilde = e**rho_e*np.exp(eps)
+    gtilde = rho_e*e + eps
+    gtilde = np.minimum(gtilde, emax)
+    gtilde = np.maximum(gtilde, emin)
+
     return gtilde
 
 
@@ -263,28 +273,28 @@ def dr_to_sprime(model, dr, Nf):
         Next period's state variable, given the decision rule mdr
     '''
 
-    Nkf = Nf[0]
-    Nef = Nf[1]
-    kgridf, egridf = fine_grid(model, Nf)
+    sgridf = fine_grid(model, Nf)
     trans = model.functions['transition']      # trans(s, x, e, p, out)
     parms = model.calibration['parameters']
+    grid = model.get_grid()
+    a = grid.a
+    b = grid.b
 
-    # NOTE: This looks backwards, but we reverse columns so we're back to [k, e] ordering
-    sf = mlinspace(np.array([min(egridf), min(kgridf)]), np.array([max(egridf), max(kgridf)]), np.array([Nef, Nkf]))
-    sf[:,[0, 1]] = sf[:,[1, 0]]
-
-    drc = dr(sf)
+    drc = dr(sgridf)
 
     # NOTE: sprimef has second variable moving fastest.
-    sprimef = trans(sf, drc, np.zeros([Nkf*Nef,1]), parms)    # Goes off the grid bounds for kprimef
-    kprimef = sprimef[:,0]
-    kprimef = np.maximum(kprimef, min(kgridf))
-    kprimef = np.minimum(kprimef, max(kgridf))
+    sprimef = trans(sgridf, drc, np.zeros([np.prod(Nf),1]), parms)
 
-    return kprimef
+    # Keep state variables on their respective grids
+    for i_s in range(len(a)):
+        sprimef[:,i_s] = np.maximum(sprimef[:,i_s], a[i_s])
+        sprimef[:,i_s] = np.minimum(sprimef[:,i_s], b[i_s])
+
+    return sprimef
 
 
-
+# TODO: GENERALIZE!
+# TODO: Will need to take into account potentially multiple state variables.
 def lookup(grid, x):
     '''
     Finds indices of points in the grid that bracket the values in x.
@@ -308,28 +318,27 @@ def lookup(grid, x):
 
 def fine_grid(model, Nf):
     '''
-    Construct fine grid for state variables.
+    Construct evenly spaced fine grids for endogenous state variables, using the
+    upper and lower bounds of the state space as specified in the yaml file.
+
     Parameters
     ----------
     model : NumericModel
         "dtcscc" model to be solved
     Nf : array
-        Number of fine grid points in each dimension
+        Number of points on a fine grid for each endogeneous state variable, for
+        use in computing the stationary distribution.
 
     Returns
     -------
-    kgridf : array
-        Fine gird of points using dimensions in Nf
-    egridf : array
-        Fine gird of points using dimensions in Nf
+    sgridf : array
+        Fine grid for each endogenous state variable.
 
     '''
-    Nkf = Nf[0]
-    Nef = Nf[1]
+
     grid = model.get_grid()
     a = grid.a
     b = grid.b
-    kgridf = np.linspace(a[0], b[0], num=Nkf)
-    egridf = np.linspace(a[1], b[1], num=Nef)
+    sgridf = mlinspace(a,b,Nf)
 
-    return kgridf, egridf
+    return sgridf

@@ -233,7 +233,6 @@ def mdr_to_sprime(model, mdr, Nf):
     return sprimef
 
 
-# DONE
 def fine_grid(model, Nf):
     '''
     Construct evenly spaced fine grids for endogenous state variables, using the
@@ -248,7 +247,7 @@ def fine_grid(model, Nf):
         use in computing the stationary distribution.
     Returns
     -------
-    gridf : list
+    sgridf : array
         Fine grid for each endogenous state variable.
     '''
 

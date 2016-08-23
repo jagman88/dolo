@@ -239,7 +239,11 @@ def gtilde(model, e, eps):
     emin = grid.a[1]
     emax = grid.b[1]
     rho_e = model.calibration_dict['rho_e']
-    gtilde = np.maximum(np.minimum(e**rho_e*np.exp(eps), emax), emin)
+    # gtilde = e**rho_e*np.exp(eps)
+    gtilde = rho_e*e + eps
+    gtilde = np.minimum(gtilde, emax)
+    gtilde = np.maximum(gtilde, emin)
+
     return gtilde
 
 
