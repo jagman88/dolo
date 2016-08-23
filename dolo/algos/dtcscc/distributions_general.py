@@ -7,7 +7,6 @@ from dolo.numeric.misc import mlinspace
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
-# TODO: GENERALIZE
 def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     Compute a histogram of the stationary distribution for some fixed set of
@@ -31,60 +30,50 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     Returns
     -------
     L : array
-        The density across states for the model
+        The density across states for the model. Note, the implied
+        grid that L lays on follows the convention that for [N1, N2, N3, ...], earlier states vary slower than later states. Therefore, if reshaping L, make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
     '''
+    # TODO: once we know how many endogenous vs. exogenous states there are, it's easy to create additional transition matrices Q by simply looping over each of the respective states, and using the single_state_transition_matrix function.
 
-    # Exogenous/Markov state variable
-    Nkf = Nf[0]
-    Nef = Nf[1]
-    Nq = 7
-    kgridf, egridf = fine_grid(model, Nf)
-    # NOTE: this seems backwards, but we reverse the columns so we're back to [k, e] ordering
-    sf = mlinspace(np.array([min(egridf), min(kgridf)]), np.array([max(egridf), max(kgridf)]), np.array([Nef, Nkf]))
-    sf[:,[0, 1]] = sf[:,[1, 0]]
+    #
+    Ntot = np.prod(Nf)
+    sgridf = fine_grid(model, Nf)
+    kgridf = np.unique(sgridf[:,0])
+    egridf = np.unique(sgridf[:,1])
     parms = model.calibration['parameters']
 
     # Get the quadrature nodes for the iid normal shocks
     distrib = model.get_distribution()
     nodes, weights = distrib.discretize(orders=Nq)
-    # TODO: get the quadrature appropriate to the shock (i.e. normal, beta, etc..)
-
-    Qe = spa.csr_matrix((Nkf*Nef, Nef))
-    idxlist = np.arange(0,Nkf*Nef)
-
-    for i in range(Nq):
-        eprimef = gtilde(model, sf[:,1], nodes[i])
-        idL, idU = lookup(egridf, eprimef)  # Upper and lower bracketing indices
-        weighttoupper = ( (eprimef - egridf[idL])/(egridf[idU] - egridf[idL]) ).flatten()
-        weighttolower = ( (egridf[idU] - eprimef)/(egridf[idU] - egridf[idL]) ).flatten()
-        QeL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Nkf*Nef, Nef))
-        QeU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Nkf*Nef, Nef))
-        Qe += weights[i]*(QeL + QeU).tocsr()
 
     # Find the state tomorrow on the fine grid
-    kprimef = dr_to_sprime(model, dr, Nf)
+    sprimef = dr_to_sprime(model, dr, Nf)
 
-    idxlist = np.arange(0,Nkf*Nef)
-    idL, idU = lookup(kgridf, kprimef)  # Upper and lower bracketing indices
+    # TODO: Need to know how many exogenous and endogenous state variables, then compute for multiple states for each type.
 
-    weighttoupper = ( (kprimef - kgridf[idL])/(kgridf[idU] - kgridf[idL]) ).flatten()
-    weighttolower = ( (kgridf[idU] - kprimef)/(kgridf[idU] - kgridf[idL]) ).flatten()
+    # Compute endogenous state transition matrices
+    Qk = single_state_transition_matrix(kgridf, sprimef[:,0], Nf, Nf[0])
 
-    QkL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Nkf*Nef, Nkf))
-    QkU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Nkf*Nef, Nkf))
-    Qk =(QkL + QkU).tocsr()    # convert to CSR for better sparse matrix arithmetic performance.
+    # Compute exogenous state transition matrices
+    Qe = spa.csr_matrix((Ntot, Nf[1]))
+    for i in range(Nq):
+        eprimef = gtilde(model, sgridf[:,1], nodes[i])
+        Qe += weights[i]*single_state_transition_matrix(egridf, eprimef, Nf, Nf[1])
 
     # TODO: Need to keep the row kronecker product in sparse matrix format
     Qk = Qk.toarray()
     Qe = Qe.toarray()
-    rowkron = Qe[:, :, None]*Qk[:, None, :]
-    rowkron = rowkron.reshape([Nkf*Nef, -1])
+
+    # Backwards...?
+    rowkron = Qk[:, :, None]*Qe[:, None, :]
+    # rowkron = Qe[:, :, None]*Qk[:, None, :]
+    rowkron = rowkron.reshape([Ntot, -1])
     QT = spa.csr_matrix(rowkron).T
 
     # Find stationary distribution, starting from uniform distribution
-    L = np.ones(Nkf*Nef)
+    L = np.ones(Ntot)
     L = L/sum(L)
     for itL in range(itmaxL):
         Lnew = QT*L      # Sparse matrices can be multipled
@@ -98,11 +87,52 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
             if np.mod(itL, 100) == 0:
                 print('Iteration = %i, dist = %f \n' % (itL, dL))
 
-
     return L, QT
 
 
-# TODO: GENERALIZE
+def single_state_transition_matrix(grid, vals, Nf, Nstate):
+    '''
+    Compute the transition matrix for an individual state variable. Transitions are
+    from states defined on a fine grid with the dimensions in Nf, to the unique values
+    that lie on the individual state grid (with dimension Nstate).
+
+    Parameters
+    ----------
+    grid : Array
+        The approximated model's state space defined on a grid. Must be unique
+        values, sorted in ascending order.
+    vals : Array
+        Actual values of state variable next period (computed using a transition or decision rule)
+    Nf : array
+        Number of fine grid points in each dimension
+    Nstate : int
+        Number of fine grid points for the state variable in question.
+
+    Returns
+    -------
+    Qstate : sparse matrix
+        An [NtotxNstate] Transition probability matrix for the state variable in quesiton.
+
+    '''
+    Ntot = np.prod(Nf)
+
+    idxlist = np.arange(0,Ntot)
+    # Find upper and lower bracketing indices for the state values on the grid
+    idL, idU = lookup(grid, vals)
+
+    # Assign probability weight to the bracketing points on the grid
+    weighttoupper = ( (vals - grid[idL])/(grid[idU] - grid[idL]) ).flatten()
+    weighttolower = ( (grid[idU] - vals)/(grid[idU] - grid[idL]) ).flatten()
+
+    # Construct sparse transition matrices. Note: we convert to CSR for better sparse matrix arithmetic performance.
+    QstateL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Ntot, Nstate))
+    QstateU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Ntot, Nstate))
+    Qstate =(QstateL + QstateU).tocsr()
+
+    return Qstate
+
+
+
 def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     '''
     Solve for the equilibrium value of the aggregate capital stock in the model.
@@ -134,12 +164,12 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     # TODO: need option that selects which algorithm will be used to solve for
     # the decision rule
 
-    Nef = Nf[1]
+    # TODO: Need to allow for multiple aggregate variables to be computed. E.g. a model with aggregate capital and labor.
+
     K = Kinit
     model.set_calibration(kagg=K)
     dr = time_iteration(model, with_complementarities=True, verbose=False)
-    kprimef = dr_to_sprime(model, dr, Nf)
-    kgridf, egridf = fine_grid(model, Nf)
+    sgridf = fine_grid(model, Nf)
 
     damp = 0.999
     for iteq in range(itermaxKeq):
@@ -148,7 +178,7 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
 
         # Solve for stationary distribution given decision rule
         L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
-        Kagg = np.dot(L, np.tile(kgridf,Nef))
+        Kagg = np.dot(L, sgridf[:,0])
 
         dK = np.linalg.norm(Kagg-K)/K
         if (dK < tolKeq):
@@ -167,54 +197,63 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     return K
 
 
-# TODO: GENERALIZE
-def supply_demand(model, Nf, numpoints=20, lower=40, upper=75, verbose=True):
+def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, upper=75, verbose=True):
     '''
-    Solve the model at a range of aggregate capital values to generate supply
-    and demand curves for the aggregate capital stock.
+    Solve the model at a range of aggregate capital values to generate supply and demand curves a given aggregate variable.
+    Note, the aggregate demand for the variable must be (at least implicitly) defined in the model file, .e.g., K = f(r) or
+    L = g(w).
 
     Parameters
     ----------
     model : NumericModel
         "dtcscc" model to be solved
+    varname : string
+        The string name of the aggregate variable in question. e.g.
+        varname = 'kagg' picks out aggregate capital.
+    price : string
+        The string name of the price of the aggregate variable, e.g. price = 'r' picks out the interest rate
     Nf : array
         Number of fine grid points in each dimension
+    Nq : int
+        Number of quadrature nodes over the iid shock
     numpoints : int
         Number of points at which to evaluate the curves
     lower : float
-        Lower bound on aggregate capital stock (demand)
-    Upper : float
-        Upper bound on aggregate capital stock (demand)
+        Lower bound on aggregate variable (demand)
+    upper : float
+        Upper bound on aggregate variable (demand)
 
     Returns
     -------
-    Kd : array
-        Set of aggreate capital demands
-    Ks : array
-        Set of aggregate capital supplies
-    r : array
-        Set of interest rates at each point on the demand-supply curves
+    Ad : array
+        Set of aggreate demands
+    As : array
+        Set of aggregate supplies
+    p : array
+        Set of prices at each point on the demand-supply curves
     '''
 
-    Nef = Nf[1]
-    Nq = 7
-    kgridf, egridf = fine_grid(model, Nf)
+    sgridf = fine_grid(model, Nf)
 
-    Kd = np.linspace(lower,upper,numpoints)
-    Ks = np.zeros([numpoints,1])
-    r = np.zeros([numpoints,1])
+    Ad = np.linspace(lower,upper,numpoints)
+    As = np.zeros([numpoints,1])
+    p = np.zeros([numpoints,1])
 
     for i in range(numpoints):
-        model.set_calibration(kagg=Kd[i])
+        # Set new aggregate variable value and solve
+        model.set_calibration(varname,Ad[i])
         dr = time_iteration(model, with_complementarities=True, verbose=False)
-        kprimef = dr_to_sprime(model, dr, Nf)
+
+        # Compute aggregate supply using computed distribution
         L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
-        Ks[i] = np.dot(L, np.tile(kgridf,Nef))
-        r[i] = model.calibration_dict['r']
+        As[i] = np.dot(L, sgridf[:,0])
+
+        # Get price of the aggregate variable
+        p[i] = model.calibration_dict[pricename]    # p[i] = model.calibration_dict['r']
         if verbose is True:
             print('Iteration = %i\n' % i)
 
-    return Kd, Ks, r
+    return Ad, As, p
 
 
 
