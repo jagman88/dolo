@@ -9,7 +9,8 @@ from dolo.numeric.misc import mlinspace
 
 def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
-    Compute a histogram of the stationary distribution for some fixed set of aggregate variables.
+    Compute a histogram of the stationary distribution for some fixed set of
+    aggregate variables.
 
     Parameters
     ----------
@@ -128,7 +129,8 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
         Equilibrium aggregate capital
     '''
 
-    # TODO: need option for which algorithm will be used to solve for the decision rule
+    # TODO: need option that selects which algorithm will be used to solve for
+    # the decision rule
 
     Nkf = Nf[0]
     Nef = Nf[1]
