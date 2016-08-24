@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.sparse as spa
-from dolo.algos.dtcscc.time_iteration import time_iteration
+from dolo.algos.dtcscc.time_iteration import time_iteration, time_iteration_direct
 from dolo.numeric.misc import mlinspace
 
 
@@ -168,13 +168,20 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
 
     K = Kinit
     model.set_calibration(kagg=K)
-    dr = time_iteration(model, with_complementarities=True, verbose=False)
+    if ('direct_response' in model.symbolic.equations):
+        dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
+    else:
+        dr = time_iteration(model, with_complementarities=True, verbose=False)
+
     sgridf = fine_grid(model, Nf)
 
     damp = 0.999
     for iteq in range(itermaxKeq):
         # Solve for decision rule given current guess for K
-        dr = time_iteration(model, with_complementarities=True, verbose=False)
+        if ('direct_response' in model.symbolic.equations):
+            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
+        else:
+            dr = time_iteration(model, with_complementarities=True, verbose=False)
 
         # Solve for stationary distribution given decision rule
         L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
@@ -242,7 +249,10 @@ def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, u
     for i in range(numpoints):
         # Set new aggregate variable value and solve
         model.set_calibration(varname,Ad[i])
-        dr = time_iteration(model, with_complementarities=True, verbose=False)
+        if ('direct_response' in model.symbolic.equations):
+            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
+        else:
+            dr = time_iteration(model, with_complementarities=True, verbose=False)
 
         # Compute aggregate supply using computed distribution
         L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
