@@ -3,7 +3,7 @@ model_type: dtcscc
 name: incomplete_markets
 
 symbols:
-    states: [k, e]
+    states: [ k, e]
     controls: [c]
     shocks: [eps_e]
     expectations: [m]

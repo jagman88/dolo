@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse as spa
 from dolo.algos.dtcscc.time_iteration import time_iteration, time_iteration_direct
 from dolo.numeric.misc import mlinspace
+from dolo.numeric.discretization.discretization import rouwenhorst
 
 
 # # Check whether inverse transition is in the model.
@@ -37,11 +38,19 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     # TODO: once we know how many endogenous vs. exogenous states there are, it's easy to create additional transition matrices Q by simply looping over each of the respective states, and using the single_state_transition_matrix function.
 
-    #
+    # NOTE: as it stands, variables are ordered as: [endogenous, exogenous]
+
+    # HACK: get number of exogenous states from the number of shocks in the model.
+    # We are assuming that each shock is associated with an exogenous state.
+    # That is, no IID shocks enter the model on their own.
+    Nexo = len(model.calibration['shocks'])
+    Nend = len(model.calibration['states']) - Nexo
+
+    # Total number of continuous states
     Ntot = np.prod(Nf)
+
+    # Create fine grid for the histogram
     sgridf = fine_grid(model, Nf)
-    kgridf = np.unique(sgridf[:,0])
-    egridf = np.unique(sgridf[:,1])
     parms = model.calibration['parameters']
 
     # Get the quadrature nodes for the iid normal shocks
@@ -51,26 +60,43 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     # Find the state tomorrow on the fine grid
     sprimef = dr_to_sprime(model, dr, Nf)
 
-    # TODO: Need to know how many exogenous and endogenous state variables, then compute for multiple states for each type.
+
+    # Compute exogenous state transition matrices by discretizing the processes
+    # First state:
+
+    [nodes, Qm] = rouwenhorst(rho, sigma, N)
+
+    Qm = spa.csr_matrix((Ntot, Nf[Nend]))   # Start from first exogenous state
+    mgrid = np.unique(sgridf[:,Nend])
+    for i in range(Nq):
+        mprimef = gtilde(model, sgridf[:,Nend], nodes[i])
+        Qm += weights[i]*single_state_transition_matrix(mgrid, mprimef, Nf, Nf[Nend])
+    Qm = Qm.toarray()
+
+    # TODO: Finish extra dimensions. Tricky because of extra dimensions in Nq...
+    # Second (and further) state transitions created via repeated tensor products
+    # for i_m in range(Nend, Nend+Nexo+1):
+    #     Qtmp = spa.csr_matrix((Ntot, Nf[i_m]))   # Start from first exogenous state
+
+
 
     # Compute endogenous state transition matrices
-    Qk = single_state_transition_matrix(kgridf, sprimef[:,0], Nf, Nf[0])
+    # First state:
+    sgrid = np.unique(sgridf[:,0])
+    Qs = single_state_transition_matrix(sgrid, sprimef[:,0], Nf, Nf[0]).toarray()
+    # Second (and further) state transitions created via repeated tensor products
+    for i_s in range(1,Nend):
+        sgrid = np.unique(sgridf[:,i_s])
+        Qtmp = single_state_transition_matrix(sgrid, sprimef[:,i_s], Nf, Nf[i_s]).toarray()
+        N = Qtmp.shape[1]*Qs.shape[1]
+        Qs = Qs[:, :, None]*Qtmp[:, None, :]
+        Qs = Qs.reshape([N, -1])
 
-    # Compute exogenous state transition matrices
-    Qe = spa.csr_matrix((Ntot, Nf[1]))
-    for i in range(Nq):
-        eprimef = gtilde(model, sgridf[:,1], nodes[i])
-        Qe += weights[i]*single_state_transition_matrix(egridf, eprimef, Nf, Nf[1])
-
+    # Construct all-state transitions via endogenous-exogenous tensor product
+    Q = Qs[:, :, None]*Qm[:, None, :]
+    Q = Q.reshape([Ntot, -1])
+    QT = spa.csr_matrix(Q).T
     # TODO: Need to keep the row kronecker product in sparse matrix format
-    Qk = Qk.toarray()
-    Qe = Qe.toarray()
-
-    # Backwards...?
-    rowkron = Qk[:, :, None]*Qe[:, None, :]
-    # rowkron = Qe[:, :, None]*Qk[:, None, :]
-    rowkron = rowkron.reshape([Ntot, -1])
-    QT = spa.csr_matrix(rowkron).T
 
     # Find stationary distribution, starting from uniform distribution
     L = np.ones(Ntot)
@@ -160,9 +186,6 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     K : float
         Equilibrium aggregate capital
     '''
-
-    # TODO: need option that selects which algorithm will be used to solve for
-    # the decision rule
 
     # TODO: Need to allow for multiple aggregate variables to be computed. E.g. a model with aggregate capital and labor.
 
@@ -274,7 +297,7 @@ def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, u
 # heterogeneous agents model...
 def gtilde(model, e, eps):
     '''
-    Transition rule for the exogeneous variable that ensures it remains on the grid.
+    Transition rule for an exogeneous variable that ensures it remains on the grid.
 
     Parameters
     ----------
@@ -384,6 +407,13 @@ def fine_grid(model, Nf):
         Fine grid for each endogenous state variable.
 
     '''
+    # HACK: trick to get number of exogenous states
+    Nexo = len(model.calibration['shocks'])
+    Nend = len(model.calibration['states']) - Nexo
+
+    rho_e = model.calibration_dict['rho_e']
+    sig_e = model.calibration_dict['sig_e']
+    mgrid, Qm = rouwenhorst(rho_e, sig_e, Nf[1])
 
     grid = model.get_grid()
     a = grid.a
