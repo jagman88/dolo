@@ -6,6 +6,7 @@ symbols:
     states: [k, e]
     controls: [c]
     shocks: [eps_e]
+    expectations: [m]
     rewards: [u]
     parameters: [beta,sigma,alpha,delta,lbar,a,mu,Lbar,Lb,Lg,kagg,y,w,r,tau,DeltaA,ub,ug, sig_e, rho_e, sig_eun]
 
@@ -19,6 +20,12 @@ equations:
     #     - c = k*(1+r-delta) + ((1-tau)*lbar*exp(e) + mu*(1-exp(e)))*w - k(+1)
     arbitrage:
         - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + lbar*exp(e)*w
+    expectation:
+        - m = beta/c(1)^sigma*(1-delta+r)
+    direct_response:
+        - c = m^(-1/sigma)
+        # - i = z*k^alpha*n^(1-alpha) - (m)^(-1/sigma)
+
     felicity:
         - u = c^(1-sigma)/(1-sigma)
 
@@ -49,6 +56,7 @@ calibration:
     r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1)
     tau: mu*ub/(lbar*Lbar)
     sig_eun: 3*sig_e/sqrt(1 - rho_e^2)
+    m: c^(-sigma)
 
 options:
 
