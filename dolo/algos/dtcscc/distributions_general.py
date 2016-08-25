@@ -8,7 +8,7 @@ from dolo.numeric.discretization.discretization import rouwenhorst
 # # Check whether inverse transition is in the model.
 # ('transition_inv' in model.functions)
 
-def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
+def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
     '''
     Compute a histogram of the stationary distribution for some fixed set of
     aggregate variables.
@@ -21,8 +21,6 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
         Decision rule associated with solution to the model
     Nf : array
         Number of fine grid points in each dimension
-    Nq : int
-        Number of quadrature nodes over the iid shock
     itmaxL : int
         Maximum number of iterations over the distribution evolution equation
     tolL : int
@@ -32,17 +30,17 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     -------
     L : array
         The density across states for the model. Note, the implied
-        grid that L lays on follows the convention that for [N1, N2, N3, ...], earlier states vary slower than later states. Therefore, if reshaping L, make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+        grid that L lays on follows the convention that for [N1, N2, N3, ...],
+        earlier states vary slower than later states. Therefore, if reshaping L,
+        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
     '''
-    # TODO: once we know how many endogenous vs. exogenous states there are, it's easy to create additional transition matrices Q by simply looping over each of the respective states, and using the single_state_transition_matrix function.
-
     # NOTE: as it stands, variables are ordered as: [endogenous, exogenous]
 
-    # HACK: get number of exogenous states from the number of shocks in the model.
-    # We are assuming that each shock is associated with an exogenous state.
-    # That is, no IID shocks enter the model on their own.
+    # HACK: get number of exogenous states from the number of shocks in
+    # the model. We are assuming that each shock is associated with an
+    # exogenous state. That is, no IID shocks enter the model on their own.
     Nexo = len(model.calibration['shocks'])
     Nend = len(model.calibration['states']) - Nexo
 
@@ -53,42 +51,21 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
     sgridf = fine_grid(model, Nf)
     parms = model.calibration['parameters']
 
-    # Get the quadrature nodes for the iid normal shocks
-    distrib = model.get_distribution()
-    nodes, weights = distrib.discretize(orders=Nq)
-
     # Find the state tomorrow on the fine grid
     sprimef = dr_to_sprime(model, dr, Nf)
 
-
-    # Compute exogenous state transition matrices by discretizing the processes
-    # First state:
-
-    [nodes, Qm] = rouwenhorst(rho, sigma, N)
-
-    Qm = spa.csr_matrix((Ntot, Nf[Nend]))   # Start from first exogenous state
-    mgrid = np.unique(sgridf[:,Nend])
-    for i in range(Nq):
-        mprimef = gtilde(model, sgridf[:,Nend], nodes[i])
-        Qm += weights[i]*single_state_transition_matrix(mgrid, mprimef, Nf, Nf[Nend])
-    Qm = Qm.toarray()
-
-    # TODO: Finish extra dimensions. Tricky because of extra dimensions in Nq...
-    # Second (and further) state transitions created via repeated tensor products
-    # for i_m in range(Nend, Nend+Nexo+1):
-    #     Qtmp = spa.csr_matrix((Ntot, Nf[i_m]))   # Start from first exogenous state
-
-
+    # Compute exogenous state transition matrices
+    mgrid, Qm = exog_grid_trans(model, Nf)
 
     # Compute endogenous state transition matrices
     # First state:
     sgrid = np.unique(sgridf[:,0])
     Qs = single_state_transition_matrix(sgrid, sprimef[:,0], Nf, Nf[0]).toarray()
-    # Second (and further) state transitions created via repeated tensor products
+    # Subsequent state transitions created via repeated tensor products
     for i_s in range(1,Nend):
         sgrid = np.unique(sgridf[:,i_s])
         Qtmp = single_state_transition_matrix(sgrid, sprimef[:,i_s], Nf, Nf[i_s]).toarray()
-        N = Qtmp.shape[1]*Qs.shape[1]
+        N = Qs.shape[1]*Qtmp.shape[1]
         Qs = Qs[:, :, None]*Qtmp[:, None, :]
         Qs = Qs.reshape([N, -1])
 
@@ -118,9 +95,10 @@ def stat_dist(model, dr, Nf, Nq=7, itmaxL=5000, tolL=1e-8, verbose=False):
 
 def single_state_transition_matrix(grid, vals, Nf, Nstate):
     '''
-    Compute the transition matrix for an individual state variable. Transitions are
-    from states defined on a fine grid with the dimensions in Nf, to the unique values
-    that lie on the individual state grid (with dimension Nstate).
+    Compute the transition matrix for an individual state variable.
+    Transitions are from states defined on a fine grid with the dimensions
+    in Nf, to the unique values that lie on the individual state grid
+    (with dimension Nstate).
 
     Parameters
     ----------
@@ -128,7 +106,8 @@ def single_state_transition_matrix(grid, vals, Nf, Nstate):
         The approximated model's state space defined on a grid. Must be unique
         values, sorted in ascending order.
     vals : Array
-        Actual values of state variable next period (computed using a transition or decision rule)
+        Actual values of state variable next period (computed using a
+        transition or decision rule)
     Nf : array
         Number of fine grid points in each dimension
     Nstate : int
@@ -137,7 +116,8 @@ def single_state_transition_matrix(grid, vals, Nf, Nstate):
     Returns
     -------
     Qstate : sparse matrix
-        An [NtotxNstate] Transition probability matrix for the state variable in quesiton.
+        An [NtotxNstate] Transition probability matrix for the state
+        variable in quesiton.
 
     '''
     Ntot = np.prod(Nf)
@@ -150,7 +130,8 @@ def single_state_transition_matrix(grid, vals, Nf, Nstate):
     weighttoupper = ( (vals - grid[idL])/(grid[idU] - grid[idL]) ).flatten()
     weighttolower = ( (grid[idU] - vals)/(grid[idU] - grid[idL]) ).flatten()
 
-    # Construct sparse transition matrices. Note: we convert to CSR for better sparse matrix arithmetic performance.
+    # Construct sparse transition matrices.
+    # Note: we convert to CSR for better sparse matrix arithmetic performance.
     QstateL = spa.coo_matrix((weighttolower, (idxlist, idL.flatten())), shape=(Ntot, Nstate))
     QstateU = spa.coo_matrix((weighttoupper, (idxlist, idU.flatten())), shape=(Ntot, Nstate))
     Qstate =(QstateL + QstateU).tocsr()
@@ -158,13 +139,15 @@ def single_state_transition_matrix(grid, vals, Nf, Nstate):
     return Qstate
 
 
-
-def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=False):
+# TODO: Need to allow for multiple aggregate variables to be computed.
+# E.g. a model with aggregate capital and labor.
+def solve_eqm(model, Nf, Kinit=50, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     '''
-    Solve for the equilibrium value of the aggregate capital stock in the model.
-    Do this via a damping algorithm over the capital stock. Iterate until
-    aggregate capital yields an interest rate that induces a distribution of
-    capital accumulation across agents that is consistent with that capital stock.
+    Solve for the equilibrium value of the aggregate capital stock in the
+    model. Do this via a damping algorithm over the capital stock. Iterate
+    until aggregate capital yields an interest rate that induces a
+    distribution of capital accumulation across agents that is consistent
+    with that capital stock.
 
     Parameters
     ----------
@@ -174,8 +157,6 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
         Initial guess for the aggregate capital stock
     Nf : array
         Number of fine grid points in each dimension
-    Nq : int
-        Number of quadrature nodes over the iid shock
     itermaxKeq : int
         Maximum number of iterations over the capital stock
     tolKeq : int
@@ -186,8 +167,6 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     K : float
         Equilibrium aggregate capital
     '''
-
-    # TODO: Need to allow for multiple aggregate variables to be computed. E.g. a model with aggregate capital and labor.
 
     K = Kinit
     model.set_calibration(kagg=K)
@@ -207,7 +186,7 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
             dr = time_iteration(model, with_complementarities=True, verbose=False)
 
         # Solve for stationary distribution given decision rule
-        L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
+        L, QT = stat_dist(model, dr, Nf, verbose=False)
         Kagg = np.dot(L, sgridf[:,0])
 
         dK = np.linalg.norm(Kagg-K)/K
@@ -227,11 +206,13 @@ def solve_eqm(model, Nf, Kinit=50, Nq=7, itermaxKeq=100, tolKeq=1e-4, verbose=Fa
     return K
 
 
-def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, upper=75, verbose=True):
+def supply_demand(model, varname, pricename, Nf, numpoints=20, lower=40,
+                  upper=75, verbose=True):
     '''
-    Solve the model at a range of aggregate capital values to generate supply and demand curves a given aggregate variable.
-    Note, the aggregate demand for the variable must be (at least implicitly) defined in the model file, .e.g., K = f(r) or
-    L = g(w).
+    Solve the model at a range of aggregate capital values to generate
+    supply and demand curves a given aggregate variable. Note, the aggregate
+    demand for the variable must be (at least implicitly) defined in the
+    model file, .e.g., K = f(r) or L = g(w).
 
     Parameters
     ----------
@@ -241,11 +222,10 @@ def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, u
         The string name of the aggregate variable in question. e.g.
         varname = 'kagg' picks out aggregate capital.
     price : string
-        The string name of the price of the aggregate variable, e.g. price = 'r' picks out the interest rate
+        The string name of the price of the aggregate variable,
+        e.g. price = 'r' picks out the interest rate
     Nf : array
         Number of fine grid points in each dimension
-    Nq : int
-        Number of quadrature nodes over the iid shock
     numpoints : int
         Number of points at which to evaluate the curves
     lower : float
@@ -278,51 +258,15 @@ def supply_demand(model, varname, pricename, Nf, Nq=7, numpoints=20, lower=40, u
             dr = time_iteration(model, with_complementarities=True, verbose=False)
 
         # Compute aggregate supply using computed distribution
-        L, QT = stat_dist(model, dr, Nf, Nq=Nq, verbose=False)
+        L, QT = stat_dist(model, dr, Nf, verbose=False)
         As[i] = np.dot(L, sgridf[:,0])
 
         # Get price of the aggregate variable
-        p[i] = model.calibration_dict[pricename]    # p[i] = model.calibration_dict['r']
+        p[i] = model.calibration_dict[pricename]
         if verbose is True:
             print('Iteration = %i\n' % i)
 
     return Ad, As, p
-
-
-
-# TODO: allow for multiple exogenous processes
-# NOTE: To do this, would need to know which variables are exogenous...
-# NOTE: Alternative would be to use the tanh trick for all exogenous
-# variable transitions. But then need that to be in any/every
-# heterogeneous agents model...
-def gtilde(model, e, eps):
-    '''
-    Transition rule for an exogeneous variable that ensures it remains on the grid.
-
-    Parameters
-    ----------
-    model : NumericModel
-        "dtcscc" model to be solved
-    e : float or array
-        Current state of the exogenous variable
-    eps : float
-        Value of shock to the exogenous variable
-
-    Returns
-    -------
-    gtilde : array
-        Next period's exogenous variable, bounded to remain on the grid space
-    '''
-    grid = model.get_grid()
-    emin = grid.a[1]
-    emax = grid.b[1]
-    rho_e = model.calibration_dict['rho_e']
-    # gtilde = e**rho_e*np.exp(eps)
-    gtilde = rho_e*e + eps
-    gtilde = np.minimum(gtilde, emax)
-    gtilde = np.maximum(gtilde, emin)
-
-    return gtilde
 
 
 def dr_to_sprime(model, dr, Nf):
@@ -345,17 +289,17 @@ def dr_to_sprime(model, dr, Nf):
         Next period's state variable, given the decision rule mdr
     '''
 
-    sgridf = fine_grid(model, Nf)
+    gridf = fine_grid(model, Nf)
     trans = model.functions['transition']      # trans(s, x, e, p, out)
     parms = model.calibration['parameters']
     grid = model.get_grid()
     a = grid.a
     b = grid.b
 
-    drc = dr(sgridf)
+    drc = dr(gridf)
 
     # NOTE: sprimef has second variable moving fastest.
-    sprimef = trans(sgridf, drc, np.zeros([np.prod(Nf),1]), parms)
+    sprimef = trans(gridf, drc, np.zeros([np.prod(Nf),1]), parms)
 
     # Keep state variables on their respective grids
     for i_s in range(len(a)):
@@ -365,14 +309,13 @@ def dr_to_sprime(model, dr, Nf):
     return sprimef
 
 
-# TODO: GENERALIZE!
-# TODO: Will need to take into account potentially multiple state variables.
 def lookup(grid, x):
     '''
     Finds indices of points in the grid that bracket the values in x.
-    Grid must be sorted in ascending order. Find the first index, i, in grid such that grid[i] <= x.
-    This is the index of the upper bound for x, unless x is equal to the lowest value on the grid,
-    in which case set the upper bound index equal to 1. The lower bound index is simply one less
+    Grid must be sorted in ascending order. Find the first index, i, in
+    grid such that grid[i] <= x. This is the index of the upper bound for x,
+    unless x is equal to the lowest value on the grid, in which case set the
+    upper bound index equal to 1. The lower bound index is simply one less
     than the upper bound index.
     '''
     N = grid.shape[0]-1   # N = last index in grid
@@ -380,8 +323,8 @@ def lookup(grid, x):
     M = grid.max()
     x = np.maximum(x, m)
     x = np.minimum(x, M)
-    idU = np.searchsorted(grid, x)   # Get insertion index = index of the upper bound
-    idU = np.maximum(idU, 1)      # Make sure upper bound is always the second index, 1, or higher.
+    idU = np.searchsorted(grid, x)   # Index of the upper bound
+    idU = np.maximum(idU, 1)      # Upper bound is always greater than 1
     idL = idU -1                  # lower bound index = upper bound index - 1
 
     return idL, idU
@@ -390,34 +333,108 @@ def lookup(grid, x):
 
 def fine_grid(model, Nf):
     '''
-    Construct evenly spaced fine grids for endogenous state variables, using the
-    upper and lower bounds of the state space as specified in the yaml file.
+    Construct evenly spaced fine grids for state variables. For endogenous
+    variables use a uniform grid with the upper and lower bounds as
+    specified in the yaml file. For exogenous variables, use grids from
+    the discretization of the AR(1) process via Rouwenhorst.
 
     Parameters
     ----------
     model : NumericModel
         "dtcscc" model to be solved
     Nf : array
-        Number of points on a fine grid for each endogeneous state variable, for
-        use in computing the stationary distribution.
+        Number of points on a fine grid for each endogeneous state
+        variable, for use in computing the stationary distribution.
 
     Returns
     -------
-    sgridf : array
-        Fine grid for each endogenous state variable.
-
+    grid : array
+        Fine grid for state variables. Note, endogenous ordered first,
+        then exogenous. Later variables are "fastest" moving, earlier
+        variables are "slowest" moving.
     '''
+
     # HACK: trick to get number of exogenous states
     Nexo = len(model.calibration['shocks'])
     Nend = len(model.calibration['states']) - Nexo
 
-    rho_e = model.calibration_dict['rho_e']
-    sig_e = model.calibration_dict['sig_e']
-    mgrid, Qm = rouwenhorst(rho_e, sig_e, Nf[1])
-
+    # ENDOGENOUS VARIABLES
     grid = model.get_grid()
     a = grid.a
     b = grid.b
-    sgridf = mlinspace(a,b,Nf)
+    sgrid = mlinspace(a[:Nend],b[:Nend],Nf[:Nend])
 
-    return sgridf
+    mgrid, Qm = exog_grid_trans(model, Nf)
+
+    # Put endogenous and exogenous grids together
+    gridf = np.hstack([np.repeat(sgrid, mgrid.shape[0],axis=0), np.tile(mgrid, (sgrid.shape[0],1))])
+
+    # grid = model.get_grid()
+    # a = grid.a
+    # b = grid.b
+    # sgridf = mlinspace(a,b,Nf)
+
+    return gridf
+
+
+def exog_grid_trans(model, Nf):
+    '''
+    Construct the grid and transition matrix for exogenous variables. Both
+    elements are drawn from the Rouwenhorst descritization of the exogenous
+    AR(1) process. The grids and transition matrices are compounded if
+    there are multiple exogenous variables, and are constructed such that
+    late variables are "fastest" moving, earlier variables are "slowest" moving.
+
+    Parameters
+    ----------
+    model : NumericModel
+        "dtcscc" model to be solved
+    Nf : array
+        Number of points on a fine grid for each endogeneous state variable,
+        for use in computing the stationary distribution.
+
+    Returns
+    -------
+    mgrid : array
+        Fine grid for exogenous state variables.
+    Qm : array
+        Transition matrix (dimension: N x Nm)
+    '''
+
+    # HACK: trick to get number of exogenous states
+    Nexo = len(model.calibration['shocks'])
+    Nend = len(model.calibration['states']) - Nexo
+    Nendtot = np.prod(Nf[:Nend])
+
+    # Get AR(1) persistence parameters via the derivative of the
+    # transition rule at the steady state
+    trans = model.functions['transition']    #  tmp(s, x, e, p, out)
+    sss, xss, ess, pss = model.calibration['states', 'controls', 'shocks', 'parameters']
+    diff = trans(sss, xss, ess, pss, diff=True)
+    diff_s = diff[0]  # derivative wrt state variables
+
+    # Get AR(1) std dev from the variance covariance matrix
+    distr = model.distribution
+
+    # EXOGENOUS VARIABLES
+    # Get first grid
+    rho = diff_s[Nend]
+    sig = np.sqrt(distr.sigma[0,0])
+    mgrid, Qm = rouwenhorst(rho, sig, Nf[Nend])
+    mgrid = mgrid[:,None]
+    # Get subsequent grids
+    for i_m in range(1,Nexo):
+        rho = diff_s[Nend+i_m]
+        sig = np.sqrt(distr.sigma[i_m,i_m])
+        tmpgrid, Qtmp = rouwenhorst(rho, sig, Nf[i_m])
+        # Compound the grids
+        tmpgrid = np.tile(tmpgrid, mgrid.shape[0])
+        mgrid = np.repeat(mgrid, Nf[i_m],axis=0)
+        mgrid = np.hstack([mgrid, tmpgrid[:,None]])
+        # Compound the transition matrices
+        Qm = np.kron(Qm, Qtmp)
+
+    # Repeat to match full sized state space.
+    Qm = np.kron(np.ones([Nendtot,1]), Qm)
+
+    return mgrid, Qm
