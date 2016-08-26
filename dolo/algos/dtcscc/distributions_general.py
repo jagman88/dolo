@@ -48,7 +48,7 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
     Ntot = np.prod(Nf)
 
     # Create fine grid for the histogram
-    sgridf = fine_grid(model, Nf)
+    grid = fine_grid(model, Nf)
     parms = model.calibration['parameters']
 
     # Find the state tomorrow on the fine grid
@@ -59,11 +59,11 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
 
     # Compute endogenous state transition matrices
     # First state:
-    sgrid = np.unique(sgridf[:,0])
+    sgrid = np.unique(grid[:,0])
     Qs = single_state_transition_matrix(sgrid, sprimef[:,0], Nf, Nf[0]).toarray()
     # Subsequent state transitions created via repeated tensor products
     for i_s in range(1,Nend):
-        sgrid = np.unique(sgridf[:,i_s])
+        sgrid = np.unique(grid[:,i_s])
         Qtmp = single_state_transition_matrix(sgrid, sprimef[:,i_s], Nf, Nf[i_s]).toarray()
         N = Qs.shape[1]*Qtmp.shape[1]
         Qs = Qs[:, :, None]*Qtmp[:, None, :]
@@ -175,7 +175,7 @@ def solve_eqm(model, Nf, Kinit=50, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     else:
         dr = time_iteration(model, with_complementarities=True, verbose=False)
 
-    sgridf = fine_grid(model, Nf)
+    grid = fine_grid(model, Nf)
 
     damp = 0.999
     for iteq in range(itermaxKeq):
@@ -187,7 +187,7 @@ def solve_eqm(model, Nf, Kinit=50, itermaxKeq=100, tolKeq=1e-4, verbose=False):
 
         # Solve for stationary distribution given decision rule
         L, QT = stat_dist(model, dr, Nf, verbose=False)
-        Kagg = np.dot(L, sgridf[:,0])
+        Kagg = np.dot(L, grid[:,0])
 
         dK = np.linalg.norm(Kagg-K)/K
         if (dK < tolKeq):
@@ -206,8 +206,86 @@ def solve_eqm(model, Nf, Kinit=50, itermaxKeq=100, tolKeq=1e-4, verbose=False):
     return K
 
 
-def supply_demand(model, varname, pricename, Nf, numpoints=20, lower=40,
-                  upper=75, verbose=True):
+def eqm_bisection(model, Nf, bounds, itermaxKeq=100, tolKeq=1e-4, verbose=False):
+    '''
+    Use bisection on the residuals of the aggregate equation.
+
+    Parameters
+    ----------
+    model : NumericModel
+        "dtcscc" model to be solved
+    dr : Decision rule
+        Decision rule associated with solution to the model
+    Nf : array
+        Number of fine grid points in each dimension
+    L : array
+        The density across states for the model.
+    varname : string
+        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
+    aggvarname : string
+        The string name of the aggregate variable. e.g
+
+    Returns
+    -------
+    resid : float
+        The value of the residual from the aggregate condition.
+    '''
+
+    K = Kinit
+    model.set_calibration(kagg=K)
+    if ('direct_response' in model.symbolic.equations):
+        dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
+    else:
+        dr = time_iteration(model, with_complementarities=True, verbose=False)
+
+
+
+
+
+# TODO: allow more general forms of the aggregate equation. At the moment can only handle equations of the form, e.g., K = integrate[ k'(k,e) d mu(k,e) ]
+def get_aggregates(model, dr, Nf, L, varname, aggvarname):
+    '''
+    Solve for an aggregate state variable given
+
+    Parameters
+    ----------
+    model : NumericModel
+        "dtcscc" model to be solved
+    dr : Decision rule
+        Decision rule associated with solution to the model
+    Nf : array
+        Number of fine grid points in each dimension
+    L : array
+        The density across states for the model.
+    varname : string
+        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
+    aggvarname : string
+        The string name of the aggregate variable. e.g
+
+    Returns
+    -------
+    resid : float
+        The value of the residual from the aggregate condition.
+    '''
+
+    states = model.symbolic.symbols['states']
+    controls = model.symbolic.symbols['controls']
+    grid = fine_grid(model, Nf)
+
+    if varname in states:
+        idx = states.index(varname)
+        aggsum = np.dot(grid[:,idx], L)
+    elif varname in controls:
+        idx = controls.index(varname)
+        aggsum = np.dot(dr(grid)[:,idx], L)
+
+    resid = model.calibration_dict[aggvarname] - aggsum
+
+    return resid
+
+
+
+def supply_demand(model, varname, pricename, Nf, lower, upper, numpoints=20, verbose=True):
     '''
     Solve the model at a range of aggregate capital values to generate
     supply and demand curves a given aggregate variable. Note, the aggregate
@@ -226,12 +304,12 @@ def supply_demand(model, varname, pricename, Nf, numpoints=20, lower=40,
         e.g. price = 'r' picks out the interest rate
     Nf : array
         Number of fine grid points in each dimension
-    numpoints : int
-        Number of points at which to evaluate the curves
     lower : float
         Lower bound on aggregate variable (demand)
     upper : float
         Upper bound on aggregate variable (demand)
+    numpoints : int
+        Number of points at which to evaluate the curves
 
     Returns
     -------
@@ -243,15 +321,21 @@ def supply_demand(model, varname, pricename, Nf, numpoints=20, lower=40,
         Set of prices at each point on the demand-supply curves
     '''
 
-    sgridf = fine_grid(model, Nf)
+    grid = fine_grid(model, Nf)
 
-    Ad = np.linspace(lower,upper,numpoints)
+    p = np.linspace(lower,upper,numpoints)
+    Ad = np.zeros([numpoints,1])
     As = np.zeros([numpoints,1])
-    p = np.zeros([numpoints,1])
+
 
     for i in range(numpoints):
-        # Set new aggregate variable value and solve
-        model.set_calibration(varname,Ad[i])
+        # Set new price
+        model.set_calibration(pricename,p[i])
+
+        # Get the aggregate variable
+        Ad[i] = model.calibration_dict[varname]
+
+        #  solve for aggregated variable
         if ('direct_response' in model.symbolic.equations):
             dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
         else:
@@ -259,10 +343,8 @@ def supply_demand(model, varname, pricename, Nf, numpoints=20, lower=40,
 
         # Compute aggregate supply using computed distribution
         L, QT = stat_dist(model, dr, Nf, verbose=False)
-        As[i] = np.dot(L, sgridf[:,0])
+        As[i] = np.dot(L, grid[:,0])
 
-        # Get price of the aggregate variable
-        p[i] = model.calibration_dict[pricename]
         if verbose is True:
             print('Iteration = %i\n' % i)
 
@@ -372,7 +454,7 @@ def fine_grid(model, Nf):
     # grid = model.get_grid()
     # a = grid.a
     # b = grid.b
-    # sgridf = mlinspace(a,b,Nf)
+    # grid = mlinspace(a,b,Nf)
 
     return gridf
 
