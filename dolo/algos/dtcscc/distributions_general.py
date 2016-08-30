@@ -3,6 +3,7 @@ import scipy.sparse as spa
 from dolo.algos.dtcscc.time_iteration import time_iteration, time_iteration_direct
 from dolo.numeric.misc import mlinspace
 from dolo.numeric.discretization.discretization import rouwenhorst
+from scipy.optimize import brentq, ridder, bisect
 
 
 # # Check whether inverse transition is in the model.
@@ -141,7 +142,8 @@ def single_state_transition_matrix(grid, vals, Nf, Nstate):
 
 # TODO: Need to allow for multiple aggregate variables to be computed.
 # E.g. a model with aggregate capital and labor.
-def solve_eqm(model, Nf, varname, aggvarname, agginit, method='damping', itermax=100, toleq=1e-4, verbose=False):
+def solve_eqm(model, Nf, varname, aggvarname, bounds,
+              method='damping', maxiter=100, toleq=1e-4, verbose=False):
     '''
     Solve for the equilibrium value of the aggregate capital stock in the
     model. Do this via a damping algorithm over the capital stock. Iterate
@@ -159,170 +161,100 @@ def solve_eqm(model, Nf, varname, aggvarname, agginit, method='damping', itermax
         The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
     aggvarname : string
         The string name of the aggregate variable. e.g
-    agginit : float
-        Initial guess for the aggregate variable.
+    bounds : tuple/list/array
+        Bounds for the value of the aggregate variable
     method : string
-        The method to solve for equilibrium.
-    itermax : int
+        The method to solve for equilibrium (see scipy.optimize documentation):
+        - damping
+        - bisection
+        - brent
+        - ridder
+    maxiter : int
         Maximum number of iterations over equilibrium computaiton algorithm
     toleq : int
         Maximum change in the equilibrium residual.
 
     Returns
     -------
-    K : float
+    Aval : float
         Equilibrium value of the aggregate variable.
     '''
 
     if method is 'damping':
-        K = eqm_damping(model, Nf, varname, aggvarname, bounds, itermax=100, toleq=1e-4, verbose=False)
+        Ainit = (bounds[0]+bounds[1])/2
+        fun = lambda A: aggregate_resid(model, Nf, A, varname, aggvarname)
+        Aval = damping(fun, Ainit, xtol=toleq, rtol=toleq, maxiter=100, verbose=verbose)
 
     elif method is 'bisection':
-        K = eqm_bisection(model, Nf, varname, aggvarname, bounds, itermax=100, toleq=1e-4, verbose=False)
+        fun = lambda A: aggregate_resid(model, Nf, A, varname, aggvarname)
+        Aval = bisect(fun, bounds[0], bounds[1], xtol=toleq, rtol=toleq, maxiter=100, full_output=False, disp=verbose)
+
+    elif method is 'brent':
+        fun = lambda A: aggregate_resid(model, Nf, A, varname, aggvarname)
+        Aval = brentq(fun, bounds[0], bounds[1], xtol=toleq, rtol=toleq, maxiter=100, full_output=False, disp=verbose)
+
+    elif method is 'ridder':
+        fun = lambda A: aggregate_resid(model, Nf, A, varname, aggvarname)
+        Aval = ridder(fun, bounds[0], bounds[1], xtol=toleq, rtol=toleq, maxiter=100, full_output=False, disp=verbose)
 
     else:
-        raise Exception("Other methods not yet supported.")
+        raise Exception("Other methods not supported.")
 
-    return K
+    return Aval
 
 
 
-def eqm_damping(model, Nf, varname, aggvarname, agginit, itermax=100, toleq=1e-4, verbose=False):
+def damping(fun, Ainit, xtol=1e-6, rtol=1e-6, maxiter=100, verbose=False):
     '''
     Use damping method on the residuals of the aggregate equilibrium equation to
     find the equilibrium aggregate variable.
 
     Parameters
     ----------
-    model : NumericModel
-        "dtcscc" model to be solved
-    dr : Decision rule
-        Decision rule associated with solution to the model
-    Nf : array
-        Number of fine grid points in each dimension
-    varname : string
-        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
-    aggvarname : string
-        The string name of the aggregate variable. e.g capital (kagg), labor (lagg)
-    agginit : float
-        Initial guess for the aggregate variable.
-    itermax : int
-        Maximum number of bisections over the aggregate variables
-    toleq : float
-        Maximum equilibrium residual at the current bisection/midpoint
+    fun : function
+        Function that yields the aggregate equation residual
+    A0 : float
+        Initial guess for the aggregate variable
+    xtol : float
+        Tolerance over distance between successive guesses
+    rtol : float
+        Tolerance over residual from the aggregate equation residual
+    maxiter : int
+        Maximum number iterations over the damping algorithm
 
     Returns
     -------
-    K : float
+    A : float
         Equilibrium value of the aggregate variable.
     '''
 
-    K = agginit
+    A_new = Ainit
     damp = 0.999
 
-    for iteq in range(itermax):
-        # Set/update calibration
-        model.set_calibration(aggvarname, K)
+    for iteq in range(maxiter):
+        A = A_new
 
-        # Solve for decision rule given current guess for aggregate
-        if ('direct_response' in model.symbolic.equations):
-            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
-        else:
-            dr = time_iteration(model, with_complementarities=True, verbose=False)
-
-        # Solve for stationary distribution given decision rule
-        L, QT = stat_dist(model, dr, Nf, verbose=False)
-        resid = get_aggregate(model, dr, Nf, L, varname, aggvarname)
-
-        dK = np.linalg.norm(resid)/K
-        if (dK < toleq):
-            break
+        resid = fun(A)
 
         if verbose is True:
-            print('Iteration = \t%i: resid=\t%1.4f' % (iteq, dK) )
+            print('Iteration = \t%i: resid=\t%1.4f' % (iteq, resid) )
 
-        # Update guess for aggregate variable using damping
-        K = K - (1-damp)*resid
-
-        # Reduce damping paramter
+        # Update guess for aggregate variable, and damping parameter
+        A_new = A - (1-damp)*resid
         damp = 0.995*damp
 
-    return K
-
-
-
-def eqm_bisection(model, Nf, varname, aggvarname, bounds, itermax=100, toleq=1e-4, verbose=False):
-    '''
-    Use bisection on the residuals of the aggregate equation.
-
-    Parameters
-    ----------
-    model : NumericModel
-        "dtcscc" model to be solved
-    dr : Decision rule
-        Decision rule associated with solution to the model
-    Nf : array
-        Number of fine grid points in each dimension
-    varname : string
-        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
-    aggvarname : string
-        The string name of the aggregate variable. e.g capital (kagg), labor (lagg)
-    bounds : list of tuples/lists
-        Upper and lower bounds for each aggregate variable
-    itermax : int
-        Maximum number of bisections over the aggregate variables
-    toleq : float
-        Maximum equilibrium residual at the current bisection/midpoint
-
-    Returns
-    -------
-    c : float
-        The value of the aggregate variable at equilibrium.
-    '''
-
-    a = bounds[0]
-    b = bounds[1]
-
-    for iteq in range(itermax):
-        c = (a + b)/2
-
-        # get resid at c
-        model.set_calibration(aggvarname, c)
-        if ('direct_response' in model.symbolic.equations):
-            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
-        else:
-            dr = time_iteration(model, with_complementarities=True, verbose=False)
-        L, QT = stat_dist(model, dr, Nf, verbose=False)
-        c_resid = get_aggregate(model, dr, Nf, L, varname, aggvarname)
-
-        # get resid at a
-        model.set_calibration(aggvarname, a)
-        if ('direct_response' in model.symbolic.equations):
-            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
-        else:
-            dr = time_iteration(model, with_complementarities=True, verbose=False)
-        L, QT = stat_dist(model, dr, Nf, verbose=False)
-        a_resid = get_aggregate(model, dr, Nf, L, varname, aggvarname)
-
-        dc = np.abs(c_resid)/c
-        if dc < toleq:
+        # Check tolerances
+        if (np.abs(resid) < rtol):
+            break
+        if (np.abs(A - A_new) < xtol):
             break
 
-        if np.sign(c_resid) == np.sign(a_resid):
-            a = c
-        else:
-            b =c
-
-        if verbose is True:
-            print('Iteration = \t%i: resid=\t%1.4f' % (iteq, dc) )
-
-    return c
-
+    return A
 
 
 
 # TODO: allow more general forms of the aggregate equation. At the moment can only handle equations of the form, e.g., K = integrate[ k'(k,e) d mu(k,e) ]
-def get_aggregate(model, dr, Nf, L, varname, aggvarname):
+def aggregate_resid(model, Nf, Aval, varname, aggvarname):
     '''
     Solve for an aggregate state variable given
 
@@ -334,8 +266,8 @@ def get_aggregate(model, dr, Nf, L, varname, aggvarname):
         Decision rule associated with solution to the model
     Nf : array
         Number of fine grid points in each dimension
-    L : array
-        The density across states for the model.
+    Aval : float
+        Value of the aggregate state varaible
     varname : string
         The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
     aggvarname : string
@@ -348,10 +280,25 @@ def get_aggregate(model, dr, Nf, L, varname, aggvarname):
         (guess for aggregate - aggregated).
     '''
 
+    # Set up
     states = model.symbolic.symbols['states']
     controls = model.symbolic.symbols['controls']
-    grid = fine_grid(model, Nf)
 
+    # Set model calibration at given aggregate variable value
+    model.set_calibration(aggvarname, Aval)
+
+    # Solve for decision rule given current guess for aggregate
+    if ('direct_response' in model.symbolic.equations):
+        dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
+    else:
+        dr = time_iteration(model, with_complementarities=True, verbose=False)
+
+    # Solve for stationary distribution given decision rule
+    L, QT = stat_dist(model, dr, Nf, verbose=False)
+
+    # Locate agent-level variable in the model,
+    # then compute aggregate value using distribution (L)
+    grid = fine_grid(model, Nf)
     if varname in states:
         idx = states.index(varname)
         aggsum = np.dot(grid[:,idx], L)
@@ -359,12 +306,15 @@ def get_aggregate(model, dr, Nf, L, varname, aggvarname):
         idx = controls.index(varname)
         aggsum = np.dot(dr(grid)[:,idx], L)
 
-    resid = model.calibration_dict[aggvarname] - aggsum
+    resid = Aval - aggsum
 
     return resid
 
 
 
+
+# TODO: Modify to allow for non-straightforward aggregate residuals. So far can
+#        only handle the form: resid = K - Kaggregated
 def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpoints=20, verbose=True):
     '''
     Solve the model at a range of aggregate capital values to generate
@@ -399,6 +349,8 @@ def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpo
     p : array
         Set of prices at each point on the demand-supply curves
     '''
+    # NOTE: This method only works if the residual is of the form: resid = K - Kaggregated
+
 
     grid = fine_grid(model, Nf)
 
@@ -407,23 +359,15 @@ def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpo
     p = np.zeros([numpoints,1])
 
     for i in range(numpoints):
-        # Set new aggregate demand
-        model.set_calibration(aggvarname, Ad[i])
+
+        # Get the aggregate equation residuals
+        resid = aggregate_resid(model, Nf, Ad[i], varname, aggvarname)
 
         # Get the price
         p[i] = model.calibration_dict[pricename]
 
-        #  solve for aggregated variable
-        if ('direct_response' in model.symbolic.equations):
-            dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
-        else:
-            dr = time_iteration(model, with_complementarities=True, verbose=False)
-
-        # Compute aggregate supply using computed distribution
-        L, QT = stat_dist(model, dr, Nf, verbose=False)
-        resid = get_aggregate(model, dr, Nf, L, varname, aggvarname)
+        # Compute aggregated variable using the residual
         As[i] = (-1)*(resid - Ad[i])      # e.g.   As = (-1)*((K - Kagg) - K)
-        # As[i] = np.dot(L, grid[:,0])
 
         if verbose is True:
             if np.mod(i, 5) == 0:
