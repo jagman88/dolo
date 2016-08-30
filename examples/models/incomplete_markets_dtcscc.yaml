@@ -42,9 +42,11 @@ calibration:
     ug: 0.04
     Lb: 1 - ub
     Lg: 1 - ug
-    DeltaA: 0.01
-    r: (1/beta - 1 + delta) - DeltaA
-    kagg: lbar*Lbar*(r/(a*alpha))^(1/(alpha-1))
+    # DeltaA: 0.01
+    # r: (1/beta - 1 + delta) - DeltaA
+    # kagg: lbar*Lbar*(r/(a*alpha))^(1/(alpha-1))
+    kagg: 50
+    r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1)
     k: kagg
     c: y - delta*kagg
     e: 1.0
@@ -54,7 +56,7 @@ calibration:
     Lbar: exp(1/2*sig_e^2/(1-rho_e^2))
     y: a*kagg^alpha*(lbar*Lbar)^alpha
     w: a*(1-alpha)*(kagg/(lbar*Lbar))^alpha
-    # r: a*alpha*(kagg/(lbar*Lbar))^(alpha - 1)
+
 
     tau: mu*ub/(lbar*Lbar)
     sig_eun: 3*sig_e/sqrt(1 - rho_e^2)
