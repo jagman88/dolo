@@ -76,11 +76,45 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
     QT = spa.csr_matrix(Q).T
     # TODO: Need to keep the row kronecker product in sparse matrix format
 
-    # Find stationary distribution, starting from uniform distribution
-    L = np.ones(Ntot)
+    # Iterate over distribution transition equation until convergence
+    L = iter_dist(QT, itmaxL=itmaxL, tolL=tolL, verbose=verbose)
+
+    return L, QT
+
+def iter_dist(QT, itmaxL, tolL, verbose=False):
+    '''
+    Given a distribution transition matrix, QT, start with an arbitrary
+    distribution and iterate until convergence, i.e. until a stationary
+    distribution is found.
+
+    Parameters
+    ----------
+    QT : sparse matrix
+        Transpose of the transition matrix describing transitions across
+        distributions.
+    itmaxL : int
+        Maximum number of iterations over the distribution evolution equation
+    tolL : int
+        Tolerance on the distance between subsequent distributions
+
+    Returns
+    -------
+    L : array
+        The density across states for the model. Note, the implied
+        grid that L lays on follows the convention that for [N1, N2, N3, ...],
+        earlier states vary slower than later states. Therefore, if reshaping L,
+        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+    '''
+    # Length of distribution
+    N = QT.shape[0]
+
+    # Start from uniform distribution
+    L = np.ones(N)
     L = L/sum(L)
+
+    # Iterate over the transition rule L' = QT@L until convergence
     for itL in range(itmaxL):
-        Lnew = QT*L      # Sparse matrices can be multipled
+        Lnew = QT@L
         dL = np.linalg.norm(Lnew-L)/np.linalg.norm(L)
         if (dL < tolL):
             break
@@ -91,7 +125,9 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
             if np.mod(itL, 100) == 0:
                 print('Iteration = %i, dist = %f \n' % (itL, dL))
 
-    return L, QT
+    return L
+
+
 
 
 def single_state_transition_matrix(grid, vals, Nf, Nstate):
@@ -284,21 +320,13 @@ def aggregate_resid(model, Nf, Aval, varname, aggvarname):
         (guess for aggregate - aggregated).
     '''
 
+    # Set calibration to current value of aggregate variable, solve for
+    # decision rule, and compute the stationary distribution
+    dr, L = set_solve_stat(model, Nf, aggvarname, Aval, verbose=False)
+
     # Set up
     states = model.symbolic.symbols['states']
     controls = model.symbolic.symbols['controls']
-
-    # Set model calibration at given aggregate variable value
-    model.set_calibration(aggvarname, Aval)
-
-    # Solve for decision rule given current guess for aggregate
-    if ('direct_response' in model.symbolic.equations):
-        dr = time_iteration_direct(model, with_complementarities=True, verbose=False)
-    else:
-        dr = time_iteration(model, with_complementarities=True, verbose=False)
-
-    # Solve for stationary distribution given decision rule
-    L, QT = stat_dist(model, dr, Nf, verbose=False)
 
     # Locate agent-level variable in the model,
     # then compute aggregate value using distribution (L)
@@ -314,6 +342,45 @@ def aggregate_resid(model, Nf, Aval, varname, aggvarname):
 
     return resid
 
+
+def set_solve_stat(model, Nf, aggvarname, Aval, verbose=False):
+    '''
+    Set aggregate calibration, solve the individual agent's decision rule,
+    compute the stationary distribution.
+        Parameters
+        ----------
+        model : NumericModel
+            "dtcscc" model to be solved
+        Nf : array
+            Number of fine grid points in each dimension
+        aggvarname : string
+            The string name of the aggregate variable. e.g
+        Aval : float
+            Value of the aggregate state varaible
+
+        Returns
+        -------
+        dr : Decision rule
+            Decision rule associated with solution to the model
+    L : array
+        The density across states for the model. Note, the implied
+        grid that L lays on follows the convention that for [N1, N2, N3, ...],
+        earlier states vary slower than later states. Therefore, if reshaping L,
+        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+    '''
+    # Set model calibration at given aggregate variable value
+    model.set_calibration(aggvarname, Aval)
+
+    # Solve for decision rule given current guess for aggregate
+    if ('direct_response' in model.symbolic.equations):
+        dr = time_iteration_direct(model, with_complementarities=True, verbose=verbose)
+    else:
+        dr = time_iteration(model, with_complementarities=True, verbose=verbose)
+
+    # Solve for stationary distribution given decision rule
+    L, QT = stat_dist(model, dr, Nf, verbose=verbose)
+
+    return dr, L
 
 
 
@@ -404,6 +471,9 @@ def dr_to_sprime(model, dr, Nf):
         Next period's state variable, given the decision rule mdr
     '''
 
+    # HACK: trick to get number of exogenous states
+    Nexo = len(model.calibration['shocks'])
+
     gridf = fine_grid(model, Nf)
     trans = model.functions['transition']      # trans(s, x, e, p, out)
     parms = model.calibration['parameters']
@@ -414,12 +484,11 @@ def dr_to_sprime(model, dr, Nf):
     drc = dr(gridf)
 
     # NOTE: sprimef has second variable moving fastest.
-    sprimef = trans(gridf, drc, np.zeros([np.prod(Nf),1]), parms)
+    sprimef = trans(gridf, drc, np.zeros([1,Nexo]), parms)
 
     # Keep state variables on their respective grids
-    for i_s in range(len(a)):
-        sprimef[:,i_s] = np.maximum(sprimef[:,i_s], a[i_s])
-        sprimef[:,i_s] = np.minimum(sprimef[:,i_s], b[i_s])
+    sprimef = np.maximum(sprimef, a[None,:])
+    sprimef = np.minimum(sprimef, b[None,:])
 
     return sprimef
 
@@ -491,7 +560,11 @@ def fine_grid(model, Nf):
 
     return gridf
 
-
+# TODO: incorporate this into multidimensional_discretization in
+# dolo.numeric.discretization. Allow option to switch between the two assumptions
+# (independent shocks or identical persistence).
+# TODO: include a check to make sure that the covariance matrix is diagonal. If
+# it is not, then use the multidimensional_discretization function. 
 def exog_grid_trans(model, Nf):
     '''
     Construct the grid and transition matrix for exogenous variables. Both
@@ -500,6 +573,13 @@ def exog_grid_trans(model, Nf):
     there are multiple exogenous variables, and are constructed such that
     late variables are "fastest" moving, earlier variables are "slowest" moving.
 
+    NOTE: This makes the strong assumption thhat the AR(1) processes are
+    independent. In particular, the i.i.d shocks that drive each AR(1) process
+    are assumed to be indpendent of each other (i.e. across AR(1) equations).
+
+    This differs from multidimensional_discretization in
+    dolo.numeric.discretization, which allows for correlated shocks, but assumes
+    that the persistence parameter is identical across AR(1) equations.
     Parameters
     ----------
     model : NumericModel
