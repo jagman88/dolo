@@ -158,7 +158,8 @@ def solve_eqm(model, Nf, varname, aggvarname, bounds,
     Nf : array
         Number of fine grid points in each dimension
     varname : string
-        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
+        The string name of the agent-level variable. E.g. assets, consumption,
+        labor, prices.
     aggvarname : string
         The string name of the aggregate variable. e.g
     bounds : tuple/list/array
@@ -253,7 +254,9 @@ def damping(fun, Ainit, xtol=1e-6, rtol=1e-6, maxiter=100, verbose=False):
 
 
 
-# TODO: allow more general forms of the aggregate equation. At the moment can only handle equations of the form, e.g., K = integrate[ k'(k,e) d mu(k,e) ]
+# TODO: allow more general forms of the aggregate equation.
+# At the moment can only handle equations of the form,
+# e.g., K = integrate[ k'(k,e) d mu(k,e) ]
 def aggregate_resid(model, Nf, Aval, varname, aggvarname):
     '''
     Solve for an aggregate state variable given
@@ -269,7 +272,8 @@ def aggregate_resid(model, Nf, Aval, varname, aggvarname):
     Aval : float
         Value of the aggregate state varaible
     varname : string
-        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
+        The string name of the agent-level variable. E.g. assets, consumption,
+        labor, prices.
     aggvarname : string
         The string name of the aggregate variable. e.g
 
@@ -315,7 +319,8 @@ def aggregate_resid(model, Nf, Aval, varname, aggvarname):
 
 # TODO: Modify to allow for non-straightforward aggregate residuals. So far can
 #        only handle the form: resid = K - Kaggregated
-def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpoints=20, verbose=True):
+def supply_demand(model, varname, aggvarname, pricename, Nf, bounds,
+                  numpoints=20, verbose=True):
     '''
     Solve the model at a range of aggregate capital values to generate
     supply and demand curves a given aggregate variable.
@@ -325,7 +330,8 @@ def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpo
     model : NumericModel
         "dtcscc" model to be solved
     varname : string
-        The string name of the agent-level variable. E.g. assets, consumption, labor, prices.
+        The string name of the agent-level variable. E.g. assets, consumption,
+        labor, prices.
     aggvarname : string
         The string name of the aggregate variable. e.g
     pricename : string
@@ -349,9 +355,11 @@ def supply_demand(model, varname, aggvarname, pricename, Nf, lower, upper, numpo
     p : array
         Set of prices at each point on the demand-supply curves
     '''
-    # NOTE: This method only works if the residual is of the form: resid = K - Kaggregated
+    # NOTE: This method only works if the residual is of the form:
+    # resid = K - Kaggregated
 
-
+    lower = bounds[0]
+    upper = bounds[1]
     grid = fine_grid(model, Nf)
 
     Ad = np.linspace(lower,upper,numpoints)
