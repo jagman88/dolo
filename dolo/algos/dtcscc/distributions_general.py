@@ -32,8 +32,7 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
     L : array
         The density across states for the model. Note, the implied
         grid that L lays on follows the convention that for [N1, N2, N3, ...],
-        earlier states vary slower than later states. Therefore, if reshaping L,
-        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+        earlier states vary slower than later states.
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
     '''
@@ -102,8 +101,7 @@ def iter_dist(QT, itmaxL, tolL, verbose=False):
     L : array
         The density across states for the model. Note, the implied
         grid that L lays on follows the convention that for [N1, N2, N3, ...],
-        earlier states vary slower than later states. Therefore, if reshaping L,
-        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+        earlier states vary slower than later states.
     '''
     # Length of distribution
     N = QT.shape[0]
@@ -365,8 +363,7 @@ def set_solve_stat(model, Nf, aggvarname, Aval, verbose=False):
     L : array
         The density across states for the model. Note, the implied
         grid that L lays on follows the convention that for [N1, N2, N3, ...],
-        earlier states vary slower than later states. Therefore, if reshaping L,
-        make sure to use Fortran ordering: L.reshape([Nf[0], Nf[1]],order='F')
+        earlier states vary slower than later states.
     '''
     # Set model calibration at given aggregate variable value
     model.set_calibration(aggvarname, Aval)
@@ -564,7 +561,7 @@ def fine_grid(model, Nf):
 # dolo.numeric.discretization. Allow option to switch between the two assumptions
 # (independent shocks or identical persistence).
 # TODO: include a check to make sure that the covariance matrix is diagonal. If
-# it is not, then use the multidimensional_discretization function. 
+# it is not, then use the multidimensional_discretization function.
 def exog_grid_trans(model, Nf):
     '''
     Construct the grid and transition matrix for exogenous variables. Both
@@ -601,6 +598,14 @@ def exog_grid_trans(model, Nf):
     Nend = len(model.calibration['states']) - Nexo
     Nendtot = np.prod(Nf[:Nend])
 
+    distr = model.distribution
+    sigma = distr.sigma
+
+    # Check that ccovariance matrix is diagonal
+    diags = sigma - np.diagonal(sigma)
+    if not np.all(diags==0):
+        raise Exception("Covariance matrix is not diagonal. Cannot proceed assuming that AR(1)s are indpendent.")
+
     # Get AR(1) persistence parameters via the derivative of the
     # transition rule at the steady state
     trans = model.functions['transition']    #  tmp(s, x, e, p, out)
@@ -608,19 +613,17 @@ def exog_grid_trans(model, Nf):
     diff = trans(sss, xss, ess, pss, diff=True)
     diff_s = diff[0]  # derivative wrt state variables
 
-    # Get AR(1) std dev from the variance covariance matrix
-    distr = model.distribution
 
     # EXOGENOUS VARIABLES
     # Get first grid
     rho = diff_s[Nend]
-    sig = np.sqrt(distr.sigma[0,0])
+    sig = np.sqrt(sigma[0,0])
     mgrid, Qm = rouwenhorst(rho, sig, Nf[Nend])
     mgrid = mgrid[:,None]
     # Get subsequent grids
     for i_m in range(1,Nexo):
         rho = diff_s[Nend+i_m]
-        sig = np.sqrt(distr.sigma[i_m,i_m])
+        sig = np.sqrt(sigma[i_m,i_m])
         tmpgrid, Qtmp = rouwenhorst(rho, sig, Nf[i_m])
         # Compound the grids
         tmpgrid = np.tile(tmpgrid, mgrid.shape[0])
