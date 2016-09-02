@@ -3,7 +3,7 @@ model_type: dtcscc
 name: incomplete_markets
 
 symbols:
-    states: [e, k]
+    states: [ k, e]
     controls: [c]
     shocks: [eps]
     expectations: [m]
@@ -12,8 +12,8 @@ symbols:
 equations:
 
     transition:
-        - e = rho*e(-1) + eps
         - k = k(-1)*(1+r-delta) + lbar*exp(e(-1))*w - c(-1)
+        - e = rho*e(-1) + eps
     arbitrage:
         - 1 = beta*(c(1)/c)^(-sigma)*(1 + r - delta)  |   0 <= c <= k*(1+r-delta) + lbar*exp(e)*w
     expectation:
@@ -49,6 +49,6 @@ options:
         sigma: [ [ sig**2] ]
 
     grid: !Cartesian
-        a: [-sig_un, 0.0]
-        b: [sig_un, 150.0]
-        orders: [10, 20]
+        a: [0.0, -sig_un]
+        b: [150.0, sig_un]
+        orders: [20, 10]

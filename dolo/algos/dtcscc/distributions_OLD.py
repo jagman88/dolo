@@ -6,7 +6,6 @@ from dolo.numeric.discretization.discretization import rouwenhorst
 from scipy.optimize import brentq, ridder, bisect
 import warnings
 
-
 warnings.warn("The distributions module is experimental. Please report any errors you may encounter during use to the EconForge/dolo issue tracker.")
 
 # # Check whether inverse transition is in the model.
@@ -39,6 +38,7 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
     QT : array
         The distribution transition matrix, i.e. L' = QT*L
     '''
+    # NOTE: as it stands, variables are ordered as: [endogenous, exogenous]
 
     # HACK: get number of exogenous states from the number of shocks in
     # the model. We are assuming that each shock is associated with an
@@ -61,19 +61,18 @@ def stat_dist(model, dr, Nf, itmaxL=5000, tolL=1e-8, verbose=False):
 
     # Compute endogenous state transition matrices
     # First state:
-    sgrid = np.unique(grid[:,Nexo])
-    Qs = single_state_transition_matrix(sgrid, sprimef[:,Nexo], Nf, Nf[Nexo]).toarray()
-
+    sgrid = np.unique(grid[:,0])
+    Qs = single_state_transition_matrix(sgrid, sprimef[:,0], Nf, Nf[0]).toarray()
     # Subsequent state transitions created via repeated tensor products
     for i_s in range(1,Nend):
-        sgrid = np.unique(grid[:,Nexo + i_s])
-        Qtmp = single_state_transition_matrix(sgrid, sprimef[:,Nexo + i_s], Nf, Nf[Nexo + i_s]).toarray()
+        sgrid = np.unique(grid[:,i_s])
+        Qtmp = single_state_transition_matrix(sgrid, sprimef[:,i_s], Nf, Nf[i_s]).toarray()
         N = Qs.shape[1]*Qtmp.shape[1]
         Qs = Qs[:, :, None]*Qtmp[:, None, :]
         Qs = Qs.reshape([N, -1])
 
     # Construct all-state transitions via endogenous-exogenous tensor product
-    Q = Qm[:, :, None]*Qs[:, None, :]
+    Q = Qs[:, :, None]*Qm[:, None, :]
     Q = Q.reshape([Ntot, -1])
     QT = spa.csr_matrix(Q).T
     # TODO: Need to keep the row kronecker product in sparse matrix format
@@ -483,7 +482,7 @@ def dr_to_sprime(model, dr, Nf):
 
     drc = dr(gridf)
 
-    # Compute state variable transitions
+    # NOTE: sprimef has second variable moving fastest.
     sprimef = trans(gridf, drc, np.zeros([1,Nexo]), parms)
 
     # Keep state variables on their respective grids
@@ -533,8 +532,8 @@ def fine_grid(model, Nf):
     Returns
     -------
     grid : array
-        Fine grid for state variables. Note, exogenous ordered first,
-        then endogenous. Later variables are "fastest" moving, earlier
+        Fine grid for state variables. Note, endogenous ordered first,
+        then exogenous. Later variables are "fastest" moving, earlier
         variables are "slowest" moving.
     '''
 
@@ -546,12 +545,17 @@ def fine_grid(model, Nf):
     grid = model.get_grid()
     a = grid.a
     b = grid.b
-    sgrid = mlinspace(a[Nexo:],b[Nexo:],Nf[Nexo:])
+    sgrid = mlinspace(a[:Nend],b[:Nend],Nf[:Nend])
 
     mgrid, Qm = exog_grid_trans(model, Nf)
 
     # Put endogenous and exogenous grids together
-    gridf = np.hstack([np.repeat(mgrid, sgrid.shape[0],axis=0), np.tile(sgrid, (mgrid.shape[0],1))])
+    gridf = np.hstack([np.repeat(sgrid, mgrid.shape[0],axis=0), np.tile(mgrid, (sgrid.shape[0],1))])
+
+    # grid = model.get_grid()
+    # a = grid.a
+    # b = grid.b
+    # grid = mlinspace(a,b,Nf)
 
     return gridf
 
@@ -594,7 +598,7 @@ def exog_grid_trans(model, Nf):
     # HACK: trick to get number of exogenous states
     Nexo = len(model.calibration['shocks'])
     Nend = len(model.calibration['states']) - Nexo
-    Nendtot = np.prod(Nf[Nexo:])
+    Nendtot = np.prod(Nf[:Nend])
 
     distr = model.distribution
     sigma = distr.sigma
@@ -611,16 +615,16 @@ def exog_grid_trans(model, Nf):
     diff = trans(sss, xss, ess, pss, diff=True)
     diff_s = diff[0]  # derivative wrt state variables
 
+
     # EXOGENOUS VARIABLES
     # Get first grid
-    rho = diff_s[0]
+    rho = diff_s[Nend]
     sig = np.sqrt(sigma[0,0])
-    mgrid, Qm = rouwenhorst(rho, sig, Nf[0])
+    mgrid, Qm = rouwenhorst(rho, sig, Nf[Nend])
     mgrid = mgrid[:,None]
-
     # Get subsequent grids
     for i_m in range(1,Nexo):
-        rho = diff_s[i_m]
+        rho = diff_s[Nend+i_m]
         sig = np.sqrt(sigma[i_m,i_m])
         tmpgrid, Qtmp = rouwenhorst(rho, sig, Nf[i_m])
         # Compound the grids
@@ -631,6 +635,6 @@ def exog_grid_trans(model, Nf):
         Qm = np.kron(Qm, Qtmp)
 
     # Repeat to match full sized state space.
-    Qm = np.kron(Qm, np.ones([Nendtot,1]))
+    Qm = np.kron(np.ones([Nendtot,1]), Qm)
 
     return mgrid, Qm
